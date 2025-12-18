@@ -19,7 +19,7 @@ class Creator(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.now())
     
     # Relationships
-    videos = relationship('Video', back_populates='creator')
+    posts = relationship('Post', back_populates='creator')
     subscriptions = relationship('Subscription', back_populates='creator')
     
     __table_args__ = (
@@ -85,28 +85,29 @@ class Creator(db.Model):
         return f'<Creator {self.platform}:{self.username}>'
 
 
-class Video(db.Model):
-    '''Represents a video from a content creator'''
-    __tablename__ = 'videos'
+class Post(db.Model):
+    '''Represents a post from a content creator (video, image, text, etc.)'''
+    __tablename__ = 'posts'
     
     id = db.Column(db.Integer, primary_key=True)
     platform_id = db.Column(db.String(200), nullable=False)  # Unique ID on the platform
     creator_id = db.Column(db.Integer, db.ForeignKey('creators.id'), nullable=False)
     subscription_id = db.Column(db.Integer, db.ForeignKey('subscriptions.id', ondelete='SET NULL'), nullable=True)
     title = db.Column(db.String(200), nullable=False)
-    url = db.Column(db.String(500), unique=True, nullable=False)
+    # thumbnail_url = db.Column(db.String(500), nullable=True)  # URL to thumbnail/image
+    # media_url = db.Column(db.String(500), nullable=True)  # URL to actual media (if applicable)
     created_at = db.Column(db.DateTime, default=datetime.now())
     
     # Relationships
-    creator = relationship('Creator', back_populates='videos')
-    subscription = relationship('Subscription', back_populates='videos')
+    creator = relationship('Creator', back_populates='posts')
+    subscription = relationship('Subscription', back_populates='posts')
     
     __table_args__ = (
-        db.Index('ix_videos_creator_created', 'creator_id', 'created_at'),
+        db.Index('ix_posts_creator_created', 'creator_id', 'created_at')
     )
     
     def __repr__(self):
-        return f'<Video {self.title}>'
+        return f'<Post {self.title}>'
 
 
 class Subscription(db.Model):
@@ -121,7 +122,7 @@ class Subscription(db.Model):
     
     # Relationships
     creator = relationship('Creator', back_populates='subscriptions')
-    videos = relationship('Video', back_populates='subscription')
+    posts = relationship('Post', back_populates='subscription')
     
     def __repr__(self):
         return f'<Subscription {self.creator_id}>'

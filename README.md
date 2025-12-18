@@ -1,3 +1,3 @@
-# Media Crawler
+# Media Depot
 
-A Flask-based web application for crawling and downloading media content from various platforms.
+A web application for crawling, downloading, storing, and managing media content from various social media platforms.

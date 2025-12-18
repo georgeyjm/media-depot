@@ -1,0 +1,10 @@
+[project]
+name = "media-depot"
+version = "0.1.0"
+description = "Central depot for your favorite media content"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.125.0",
+    "sqlmodel>=0.0.27",
+]

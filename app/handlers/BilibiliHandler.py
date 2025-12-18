@@ -1,4 +1,4 @@
-"""TikTok video handler module."""
+'''Bilibili media handler module.'''
 from typing import Dict, Any
 import re
 import os
@@ -6,11 +6,11 @@ import requests
 from bs4 import BeautifulSoup
 
 def is_supported(url: str) -> bool:
-    """Check if URL is a TikTok URL."""
+    '''Check if URL is a TikTok URL.'''
     return bool(re.match(r'^https?://(?:www\.)?tiktok\.com/@\w+/video/\d+$', url))
 
 def extract_info(url: str) -> Dict[str, Any]:
-    """Extract video information from TikTok."""
+    '''Extract video information from TikTok.'''
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
@@ -34,7 +34,7 @@ def extract_info(url: str) -> Dict[str, Any]:
     }
 
 def download(url: str, output_path: str) -> str:
-    """Download TikTok video."""
+    '''Download TikTok video.'''
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
@@ -60,11 +60,11 @@ def download(url: str, output_path: str) -> str:
                 video_url = script.string[start:end].replace('\\u0026', '&')
                 break
             except Exception as e:
-                print(f"Error extracting video URL: {e}")
+                print(f'Error extracting video URL: {e}')
                 continue
     
     if not video_url:
-        raise Exception("Could not find video URL in page")
+        raise Exception('Could not find video URL in page')
     
     # Ensure output directory exists
     os.makedirs(output_path, exist_ok=True)
@@ -74,8 +74,8 @@ def download(url: str, output_path: str) -> str:
     video_response.raise_for_status()
     
     # Create a safe filename
-    safe_title = "".join(c if c.isalnum() or c in ' ._-' else '_' for c in info['title'])
-    filename = os.path.join(output_path, f"{safe_title}.mp4")
+    safe_title = ''.join(c if c.isalnum() or c in ' ._-' else '_' for c in info['title'])
+    filename = os.path.join(output_path, f'{safe_title}.mp4')
     
     with open(filename, 'wb') as f:
         for chunk in video_response.iter_content(chunk_size=8192):
