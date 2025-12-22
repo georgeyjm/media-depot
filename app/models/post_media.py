@@ -1,9 +1,5 @@
-from datetime import datetime
-from typing import Optional
-
 from sqlalchemy import ForeignKey, Integer, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from pydantic import BaseModel, ConfigDict
 
 from app.models import Base, TimestampMixin
 
@@ -30,31 +26,3 @@ class PostMedia(Base, TimestampMixin):
 
     def __repr__(self) -> str:
         return f'<PostMedia {self.post_id} -> {self.media_asset_id}>'
-
-
-# Pydantic schemas for API serialization
-
-class PostMediaBase(BaseModel):
-    '''Base schema for PostMedia.'''
-    post_id: int
-    media_asset_id: int
-    position: int = 0
-
-
-class PostMediaCreate(PostMediaBase):
-    '''Schema for creating a PostMedia entry.'''
-    pass
-
-
-class PostMediaUpdate(BaseModel):
-    '''Schema for updating PostMedia.'''
-    position: Optional[int] = None
-
-
-class PostMediaResponse(PostMediaBase):
-    '''Schema for PostMedia API responses.'''
-    id: int
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
