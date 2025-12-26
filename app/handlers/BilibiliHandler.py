@@ -1,85 +1,83 @@
-'''Bilibili media handler module.'''
-from typing import Dict, Any
 import re
-import os
-import requests
+from datetime import datetime
+
 from bs4 import BeautifulSoup
 
-def is_supported(url: str) -> bool:
-    '''Check if URL is a TikTok URL.'''
-    return bool(re.match(r'^https?://(?:www\.)?tiktok\.com/@\w+/video/\d+$', url))
+from app.handlers import BaseHandler
+from app.models import MediaAsset
+from app.models.enums import PostType, MediaType
+from app.schemas.post import PostInfo
 
-def extract_info(url: str) -> Dict[str, Any]:
-    '''Extract video information from TikTok.'''
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-    }
-    
-    response = requests.get(url, headers=headers, timeout=10)
-    response.raise_for_status()
-    soup = BeautifulSoup(response.text, 'html.parser')
-    
-    # Extract title and description
-    title = soup.find('meta', property='og:title')['content']
-    description = soup.find('meta', property='og:description')['content']
-    
-    # Extract thumbnail
-    thumbnail = soup.find('meta', property='og:image')['content']
-    
-    return {
-        'title': title,
-        'description': description,
-        'thumbnail': thumbnail,
-        'duration': None  # TikTok API doesn't provide duration easily
-    }
 
-def download(url: str, output_path: str) -> str:
-    '''Download TikTok video.'''
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-    }
+class BilibiliHandler(BaseHandler):
+    '''Handler for Bilibili posts.'''
     
-    # First get video info to get the title for the filename
-    info = extract_info(url)
+    PLATFORM_NAME = 'bilibili'
+    PLATFORM_DISPLAY_NAME = 'BiliBili'
+    FULL_URL_PATTERNS = (
+        r'https?://(?:www\.)?bilibili\.com/video/(BV[a-zA-Z0-9]+)/?',
+    )
+    SHORT_URL_PATTERNS = (
+        r'https?://(?:www\.)?b23\.tv/[a-zA-Z0-9]+',  # Share URL
+    )
+    CREATOR_URL_PATTERN = r'(?:https?:)?//space\.bilibili\.com/(\d+)'
     
-    # Get the video page
-    response = requests.get(url, headers=headers, timeout=10)
-    response.raise_for_status()
-    soup = BeautifulSoup(response.text, 'html.parser')
+    # def resolve_url(self, url: str) -> str:
+    #     '''Resolve shortened Bilibili URLs (b23.tv) to actual post URL.'''
+    #     # If it's already a full URL, return as is
+    #     if re.search(r'bilibili\.com/video/', url):
+    #         return url
+        
+    #     # Follow redirects for shortened URLs
+    #     return super().resolve_url(url)
     
-    # Extract video URL from script tags
-    scripts = soup.find_all('script')
-    video_url = None
-    
-    for script in scripts:
-        if script.string and 'playAddr' in script.string:
+    def extract_info(self) -> PostInfo:
+        '''Extract post metadata and information.'''
+        if not self._soup:
+            self._soup = BeautifulSoup(self._html, 'html.parser')
+        
+        # Extract video-related info
+        url = self._resolved_url
+        post_type = PostType.video  # BiliBili posts are not supported yet
+        platform_post_id = re.match(self.FULL_URL_PATTERNS[0], self._resolved_url).group(1)
+        share_url = self._current_url
+        title = None
+        if el := self._soup.select_one('#viewbox_report > .video-info-title h1'):
+            title = el.get('title') or el.get('data-title') or el.text
+        caption_text = None
+        if el := self._soup.select_one('#v_desc > .basic-desc-info > span'):
+            caption_text = el.text
+        platform_created_at = None
+        if el := self._soup.select_one('#viewbox_report > .video-info-meta .pubdate-ip-text'):
             try:
-                # Extract video URL from JSON-like string
-                start = script.string.find('playAddr\\":\"') + len('playAddr\\":\"')
-                end = script.string.find('\"', start)
-                video_url = script.string[start:end].replace('\\u0026', '&')
-                break
-            except Exception as e:
-                print(f'Error extracting video URL: {e}')
-                continue
+                platform_created_at = datetime.strptime(el.text, '%Y-%m-%d %H:%M:%S')
+            except ValueError:
+                pass
+        
+        # Extract creator-related info
+        creator_el = self._soup.select_one('#mirror-vdcon .up-panel-container > .members-info-container .membersinfo-upcard')
+        creator_info_el = creator_el.select_one('.staff-info > a')
+        creator_name = creator_info_el.text
+        creator_url = creator_el.select_one('.staff-info > a').get('href')
+        creator_platform_id = re.search(self.CREATOR_URL_PATTERN, creator_url).group(1)
+        profile_pic_el = creator_el.select_one('.avatar-img > img')
+        profile_pic_url = profile_pic_el.get('src').split('@')[0]
+
+        return PostInfo(
+            platform_post_id=platform_post_id,
+            post_type=post_type,
+            url=url,
+            share_url=share_url,
+            title=title,
+            caption_text=caption_text,
+            platform_created_at=platform_created_at,
+            platform_account_id=creator_platform_id,
+            username=creator_name,
+            display_name=creator_name,
+            profile_pic_url=profile_pic_url,
+        )
     
-    if not video_url:
-        raise Exception('Could not find video URL in page')
+    def download(self) -> list[MediaAsset]:
+        '''Download all media from the post.'''
+        pass
     
-    # Ensure output directory exists
-    os.makedirs(output_path, exist_ok=True)
-    
-    # Download the video
-    video_response = requests.get(video_url, headers=headers, stream=True, timeout=30)
-    video_response.raise_for_status()
-    
-    # Create a safe filename
-    safe_title = ''.join(c if c.isalnum() or c in ' ._-' else '_' for c in info['title'])
-    filename = os.path.join(output_path, f'{safe_title}.mp4')
-    
-    with open(filename, 'wb') as f:
-        for chunk in video_response.iter_content(chunk_size=8192):
-            if chunk:  # filter out keep-alive chunks
-                f.write(chunk)
-    
-    return filename

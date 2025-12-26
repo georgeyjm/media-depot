@@ -34,7 +34,7 @@ class Post(Base, TimestampMixin):
     __table_args__ = (
         UniqueConstraint('platform_id', 'platform_post_id', name='uq_platform_post'),
         Index('ix_posts_platform_id', 'platform_id', 'platform_post_id'),
-        Index('ix_posts_account_published', 'account_id', 'published_at'),
+        Index('ix_posts_account_published', 'account_id', 'platform_created_at'),
     )
     
     def __repr__(self) -> str:

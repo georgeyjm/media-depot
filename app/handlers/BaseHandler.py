@@ -1,109 +1,214 @@
+import re
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
-import os
+from typing import Any, Optional, ClassVar
+
+import httpx
+from bs4 import BeautifulSoup
+from sqlalchemy.orm import Session
+
+from app.models import Platform, MediaAsset
+from app.models.enums import PostType
+
 
 class BaseHandler(ABC):
-    """Base class for all platform handlers."""
+    '''Base class for all platform handlers.'''
+
+    PLATFORM_NAME: ClassVar[str] = ''
+    PLATFORM_DISPLAY_NAME: ClassVar[str] = ''
+    FULL_URL_PATTERNS: ClassVar[tuple[str, ...]] = ()
+    SHORT_URL_PATTERNS: ClassVar[tuple[str, ...]] = ()
+    CREATOR_URL_PATTERN: ClassVar[str] = ''
+    
+    def __init__(self):
+        self.client = httpx.Client(
+            headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            },
+            follow_redirects=True,
+            timeout=10.0,
+        )
+        # Instance state for cached page content
+        self._current_url: Optional[str] = None
+        self._resolved_url: Optional[str] = None
+        self._response: Optional[httpx.Response] = None
+        self._html: Optional[str] = None
+        self._soup: Optional[BeautifulSoup] = None
+    
+    def __del__(self):
+        '''Close the httpx client when handler is destroyed.'''
+        self.client.close()
+    
+    def clear_cache(self) -> None:
+        '''Clear the cached page content.'''
+        self._current_url = None
+        self._resolved_url = None
+        self._response = None
+        self._html = None
     
     @classmethod
-    @abstractmethod
-    def is_supported(cls, url: str) -> bool:
-        """Check if this handler can process the given URL.
+    def supports_share(cls, share_text: str) -> bool:
+        '''Check if the share text contains a supported URL.'''
+        return any(re.search(pattern, share_text) for pattern in cls.FULL_URL_PATTERNS + cls.SHORT_URL_PATTERNS)
+    
+    @classmethod
+    def ensure_platform_exists(cls, db: Session) -> Platform:
+        '''
+        Ensure the Platform record exists in the database for this handler.
+        Creates it if it doesn't exist.
         
         Args:
-            url: The URL to check
+            db: Database session
             
         Returns:
-            bool: True if this handler can process the URL, False otherwise
-        """
-        pass
-    
-    @abstractmethod
-    def extract_info(self, url: str) -> Dict[str, Any]:
-        """Extract information from the given URL.
-        
-        Args:
-            url: The URL to extract information from
-            
-        Returns:
-            Dict containing post information with the following keys:
-            - platform_id: Unique ID of the post on the platform
-            - platform: Platform name (e.g., 'youtube', 'tiktok')
-            - post_type: One of Post.TYPE_* constants
-            - title: Post title
-            - description: Post description (optional)
-            - creator_id: Platform-specific creator ID
-            - creator_username: Creator's username
-            - creator_avatar: URL to creator's avatar (optional)
-            - thumbnail_url: URL to post thumbnail (optional)
-            - media_url: Direct URL to media file (if applicable)
-            - duration: Duration in seconds (for video/audio, optional)
-            - width: Media width in pixels (for images/videos, optional)
-            - height: Media height in pixels (for images/videos, optional)
-            - created_at: When the post was created (datetime, optional)
-        """
-        pass
-    
-    def should_download_media(self) -> bool:
-        """
-        Determine if the media should be downloaded.
-        
-        Override this in subclasses if the platform supports downloading media.
-        
-        Returns:
-            bool: True if the media should be downloaded, False otherwise
-        """
-        return False
-    
-    def download(self, url: str, output_path: str) -> Optional[str]:
-        """
-        Download the media to the specified path.
-        
-        Args:
-            url: The URL of the post
-            output_path: Directory where the media should be saved
-            
-        Returns:
-            str: Path to the downloaded file, or None if download is not supported
+            Platform instance (existing or newly created)
             
         Raises:
-            NotImplementedError: If the platform doesn't support downloading
-        """
-        raise NotImplementedError("This platform does not support downloading media")
-    
-    @staticmethod
-    def sanitize_filename(filename: str) -> str:
-        """
-        Sanitize a filename to be filesystem-safe.
+            ValueError: If PLATFORM_NAME is not set
+        '''
+        if not cls.PLATFORM_NAME:
+            raise ValueError(f'Handler {cls.__name__} does not have PLATFORM_NAME set')
+        
+        # Try to get existing platform
+        platform = db.query(Platform).filter_by(name=cls.PLATFORM_NAME).first()
+        
+        if not platform:
+            # Create new platform
+            platform = Platform(
+                name=cls.PLATFORM_NAME,
+                display_name=cls.PLATFORM_DISPLAY_NAME or ''  # cls.PLATFORM_NAME.title()
+            )
+            db.add(platform)
+            db.flush()  # Get platform.id
+        
+        return platform
+
+
+    def load(self, url: str) -> str:
+        '''
+        Load and cache the page content for a URL.
+        This should be called once before using other methods.
         
         Args:
-            filename: The original filename
-            
+            url: The URL to load (can be share URL or actual URL)
+        
         Returns:
-            str: Sanitized filename
-        """
-        # Replace any character that's not alphanumeric, space, dot, or dash with underscore
-        return "".join(c if c.isalnum() or c in ' ._-' else '_' for c in filename)
+            str: The resolved actual post URL
+        
+        Raises:
+            httpx.RequestError: If the URL cannot be loaded
+        '''
+        # If already loaded, return cached resolved URL
+        if self._current_url == url and self._resolved_url:
+            return self._resolved_url
+        
+        response = self.client.get(url)
+        response.raise_for_status()
+        
+        # Cache everything
+        self._current_url = url
+        self._resolved_url = str(response.url)
+        self._response = response
+        self._html = response.text
+        
+        return self._resolved_url
     
-    @staticmethod
-    def get_extension_from_url(url: str) -> str:
-        """
-        Extract file extension from URL.
+    # def _ensure_loaded(self, url: str) -> None:
+    #     '''
+    #     Ensure page content is loaded. If not, load it automatically.
+        
+    #     Args:
+    #         url: The URL that should be loaded
+    #     '''
+    #     if self._current_url != url or not self._html:
+    #         self.load(url)
+    
+    # def resolve_url(self, url: str) -> str:
+    #     '''Resolve a share URL to the actual post URL.'''
+    #     # If already loaded, return cached resolved URL
+    #     if self._current_url == url and self._resolved_url:
+    #         return self._resolved_url
+        
+    #     # Otherwise, load it
+    #     return self.load(url)
+    
+
+    @abstractmethod
+    def get_post_type(self, url: str) -> PostType:
+        '''Determine the type of post (video, carousel, etc.).
         
         Args:
-            url: The URL to extract extension from
+            url: The actual post URL (should be resolved first via load() or resolve_url())
             
         Returns:
-            str: File extension (without dot), or 'bin' if cannot determine
-        """
-        # Remove query parameters and fragments
-        clean_url = url.split('?')[0].split('#')[0]
+            PostType: The type of post (video, carousel, or unknown)
+        '''
+        pass
+
+    @abstractmethod
+    def extract_info(self, url: str, html: str, share_url: Optional[str]) -> dict[str, Any]:
+        '''Platform-specific implementation of extract_info.'''
+        pass
+    
+    # def extract_info(self, url: str) -> dict[str, Any]:
+    #     '''Extract post metadata and information.
         
-        # Get the last part after the last dot
-        if '.' in clean_url:
-            ext = clean_url.rsplit('.', 1)[1].lower()
-            # Remove any path components that might be in the extension
-            ext = ext.split('/')[0]
-            if ext and len(ext) <= 10:  # Reasonable max length for file extensions
-                return ext
-        return 'bin'  # Default extension if none found
+    #     This automatically loads the page if not already loaded.
+        
+    #     Args:
+    #         url: The URL to extract information from (can be share URL or actual URL)
+            
+    #     Returns:
+    #         Dict containing post information
+    #     '''
+    #     # Ensure page is loaded
+    #     resolved_url = self.load(url)
+    #     share_url = url if url != resolved_url else None
+        
+    #     # Extract info using cached HTML
+    #     info = self._extract_info_impl(resolved_url, self._html, share_url)
+    #     info['post_type'] = self.get_post_type(resolved_url)
+        
+    #     return info
+
+    @abstractmethod
+    def download(self) -> list[MediaAsset]:
+        '''Download all media from the post.'''
+        pass
+
+    @abstractmethod
+    def extract_media_urls(self, url: str) -> list[dict[str, Any]]:
+        '''Extract all media URLs from the post.
+        
+        Args:
+            url: The actual post URL (should be resolved first via load() or resolve_url())
+            
+        Returns:
+            List of dicts with media information
+        '''
+        pass
+    
+    # def process(self, url: str) -> dict[str, Any]:
+    #     '''
+    #     Process a URL completely in one go: load once, then extract everything.
+        
+    #     Args:
+    #         url: The URL to process (can be share URL or actual URL)
+        
+    #     Returns:
+    #         Dict containing:
+    #         - info: Post metadata
+    #         - media_urls: List of media URLs
+    #     '''
+    #     # Load once
+    #     resolved_url = self.load(url)
+    #     share_url = url if url != resolved_url else None
+        
+    #     # Extract everything using cached HTML
+    #     info = self._extract_info_impl(resolved_url, self._html, share_url)
+    #     info['post_type'] = self.get_post_type(resolved_url)
+    #     media_urls = self.extract_media_urls(resolved_url)
+        
+    #     return {
+    #         'info': info,
+    #         'media_urls': media_urls
+    #     }

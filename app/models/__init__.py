@@ -7,7 +7,6 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 
 class Base(DeclarativeBase):
-    '''Base class for all SQLAlchemy models.'''
     pass
 
 
