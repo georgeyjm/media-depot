@@ -27,7 +27,7 @@ class Creator(Base, TimestampMixin):
     # Constraints and indexes
     __table_args__ = (
         UniqueConstraint('platform_id', 'platform_account_id', name='uq_platform_account_id'),
-        Index('ix_creators_username', 'platform_id', 'username'),
+        Index('ix_creators_platform_username', 'platform_id', 'username'),
     )
     
     def __repr__(self) -> str:

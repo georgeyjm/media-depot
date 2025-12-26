@@ -33,7 +33,7 @@ class Post(Base, TimestampMixin):
     # Constraints and indexes
     __table_args__ = (
         UniqueConstraint('platform_id', 'platform_post_id', name='uq_platform_post'),
-        Index('ix_posts_platform_id', 'platform_id', 'platform_post_id'),
+        Index('ix_posts_platform_post_id', 'platform_id', 'platform_post_id'),
         Index('ix_posts_creator_published', 'creator_id', 'platform_created_at'),
     )
     

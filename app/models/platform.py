@@ -15,6 +15,7 @@ class Platform(Base, TimestampMixin):
 
     # Relationships
     creators: Mapped[list['Creator']] = relationship(back_populates='platform', cascade='all, delete-orphan')
+    posts: Mapped[list['Post']] = relationship(back_populates='platform', cascade='all, delete-orphan')
 
     def __repr__(self) -> str:
         return f'<Platform {self.name}>'
