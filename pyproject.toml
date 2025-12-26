@@ -5,7 +5,11 @@ description = "Central depot for your favorite media content"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "beautifulsoup4>=4.14.3",
     "fastapi>=0.125.0",
+    "httpx>=0.28.1",
     "pydantic>=2.12.5",
+    "pydantic-settings>=2.12.0",
     "sqlalchemy>=2.0.45",
+    "yt-dlp>=2025.12.8",
 ]

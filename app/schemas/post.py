@@ -17,6 +17,14 @@ class PostBase(BaseModel):
     platform_created_at: Optional[datetime] = None
 
 
+class PostInfo(PostBase):
+    '''Schema for database-agnostic extracted post metadata.'''
+    platform_account_id: str
+    username: str
+    display_name: Optional[str] = None
+    profile_pic_url: Optional[str] = None
+
+
 class PostCreate(PostBase):
     '''Schema for creating a new Post.'''
     platform_id: int
@@ -40,4 +48,3 @@ class PostResponse(PostBase):
     updated_at: datetime
     
     model_config = ConfigDict(from_attributes=True)
-
