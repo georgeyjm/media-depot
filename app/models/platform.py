@@ -14,7 +14,7 @@ class Platform(Base, TimestampMixin):
     # is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # Relationships
-    accounts: Mapped[list['Account']] = relationship(back_populates='platform', cascade='all, delete-orphan')
+    creators: Mapped[list['Creator']] = relationship(back_populates='platform', cascade='all, delete-orphan')
 
     def __repr__(self) -> str:
         return f'<Platform {self.name}>'

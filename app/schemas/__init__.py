@@ -1,8 +1,8 @@
-from app.schemas.account import (
-    AccountBase,
-    AccountCreate,
-    AccountUpdate,
-    AccountResponse,
+from app.schemas.creator import (
+    CreatorBase,
+    CreatorCreate,
+    CreatorUpdate,
+    CreatorResponse,
 )
 from app.schemas.media_asset import (
     MediaAssetBase,
@@ -31,11 +31,11 @@ from app.schemas.platform import (
 
 
 __all__ = [
-    # Account schemas
-    'AccountBase',
-    'AccountCreate',
-    'AccountUpdate',
-    'AccountResponse',
+    # Creator schemas
+    'CreatorBase',
+    'CreatorCreate',
+    'CreatorUpdate',
+    'CreatorResponse',
     # MediaAsset schemas
     'MediaAssetBase',
     'MediaAssetCreate',

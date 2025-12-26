@@ -13,7 +13,7 @@ class Post(Base, TimestampMixin):
     
     id: Mapped[int] = mapped_column(primary_key=True)
     platform_id: Mapped[int] = mapped_column(ForeignKey('platforms.id', ondelete='CASCADE'), nullable=False, index=True)
-    account_id: Mapped[int] = mapped_column(ForeignKey('accounts.id', ondelete='CASCADE'), nullable=False, index=True)
+    creator_id: Mapped[int] = mapped_column(ForeignKey('creators.id', ondelete='CASCADE'), nullable=False, index=True)
     platform_post_id: Mapped[str] = mapped_column(String(200), nullable=False)  # Platform-native post ID
     post_type: Mapped[PostType] = mapped_column(nullable=False, default=PostType.unknown)
     url: Mapped[str] = mapped_column(String(1000), nullable=False)  # Post full URL
@@ -27,14 +27,14 @@ class Post(Base, TimestampMixin):
     
     # Relationships
     platform: Mapped['Platform'] = relationship(back_populates='posts')
-    account: Mapped['Account'] = relationship(back_populates='posts')
+    creator: Mapped['Creator'] = relationship(back_populates='posts')
     media_items: Mapped[list['PostMedia']] = relationship(back_populates='post', cascade='all, delete-orphan')
     
     # Constraints and indexes
     __table_args__ = (
         UniqueConstraint('platform_id', 'platform_post_id', name='uq_platform_post'),
         Index('ix_posts_platform_id', 'platform_id', 'platform_post_id'),
-        Index('ix_posts_account_published', 'account_id', 'platform_created_at'),
+        Index('ix_posts_creator_published', 'creator_id', 'platform_created_at'),
     )
     
     def __repr__(self) -> str:

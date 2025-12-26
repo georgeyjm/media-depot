@@ -28,7 +28,7 @@ class PostInfo(PostBase):
 class PostCreate(PostBase):
     '''Schema for creating a new Post.'''
     platform_id: int
-    account_id: int
+    creator_id: int
 
 
 class PostUpdate(BaseModel):
@@ -43,7 +43,7 @@ class PostResponse(PostBase):
     '''Schema for Post API responses.'''
     id: int
     platform_id: int
-    account_id: int
+    creator_id: int
     created_at: datetime
     updated_at: datetime
     

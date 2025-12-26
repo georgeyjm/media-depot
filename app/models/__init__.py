@@ -31,7 +31,7 @@ class MetadataJSONMixin:
 
 # Import and expose all models
 from app.models.platform import Platform
-from app.models.account import Account
+from app.models.creator import Creator
 from app.models.post import Post
 from app.models.post_media import PostMedia
 from app.models.media_asset import MediaAsset
@@ -40,7 +40,7 @@ __all__ = [
     'Base',
     'TimestampMixin',
     'Platform',
-    'Account',
+    'Creator',
     'Post',
     'PostMedia',
     'MediaAsset',
