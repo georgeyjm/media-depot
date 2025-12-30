@@ -8,17 +8,19 @@ from sqlalchemy.orm import Session
 
 from app.models import Platform, MediaAsset
 from app.models.enums import PostType
+from app.config import settings
 
 
 class BaseHandler(ABC):
     '''Base class for all platform handlers.'''
 
+    PLATFORM: ClassVar[Optional[Platform]] = None  # Set during initialization
     PLATFORM_NAME: ClassVar[str] = ''
     PLATFORM_DISPLAY_NAME: ClassVar[str] = ''
     FULL_URL_PATTERNS: ClassVar[tuple[str, ...]] = ()
     SHORT_URL_PATTERNS: ClassVar[tuple[str, ...]] = ()
     CREATOR_URL_PATTERN: ClassVar[str] = ''
-    
+
     def __init__(self):
         self.client = httpx.Client(
             headers={
@@ -55,6 +57,7 @@ class BaseHandler(ABC):
         '''
         Ensure the Platform record exists in the database for this handler.
         Creates it if it doesn't exist.
+        Also stores the Platform object as a class variable for easy access.
         
         Args:
             db: Database session
@@ -79,6 +82,10 @@ class BaseHandler(ABC):
             )
             db.add(platform)
             db.flush()  # Get platform.id
+        
+        # Initialize class variables
+        cls.PLATFORM = platform
+        cls.DOWNLOAD_DIR = settings.MEDIA_ROOT_DIR / platform.name
         
         return platform
 
@@ -171,11 +178,6 @@ class BaseHandler(ABC):
     #     return info
 
     @abstractmethod
-    def download(self) -> list[MediaAsset]:
-        '''Download all media from the post.'''
-        pass
-
-    @abstractmethod
     def extract_media_urls(self, url: str) -> list[dict[str, Any]]:
         '''Extract all media URLs from the post.
         
@@ -185,6 +187,11 @@ class BaseHandler(ABC):
         Returns:
             List of dicts with media information
         '''
+        pass
+
+    @abstractmethod
+    def download(self) -> list[MediaAsset]:
+        '''Download all media from the post.'''
         pass
     
     # def process(self, url: str) -> dict[str, Any]:

@@ -41,6 +41,7 @@ def initialize_platforms(db: Session) -> None:
     '''
     Ensure all platforms from registered handlers exist in the database.
     This should be called once during application startup.
+    Also stores the Platform object as a class variable on each handler class.
     
     Args:
         db: Database session

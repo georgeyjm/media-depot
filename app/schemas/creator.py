@@ -9,12 +9,14 @@ class CreatorBase(BaseModel):
     platform_account_id: str
     username: str
     display_name: Optional[str] = None
+    profile_pic_url: Optional[str] = None
+    profile_pic_updated_at: Optional[datetime] = None
+    profile_pic_asset_id: Optional[int] = None  # Optional MediaAsset ID for profile picture
 
 
 class CreatorCreate(CreatorBase):
     '''Schema for creating a new Creator.'''
     platform_id: int
-    profile_pic_asset_id: Optional[int] = None  # Optional MediaAsset ID for profile picture
 
 
 class CreatorUpdate(BaseModel):
@@ -22,14 +24,14 @@ class CreatorUpdate(BaseModel):
     username: Optional[str] = None
     display_name: Optional[str] = None
     profile_pic_asset_id: Optional[int] = None  # Set profile pic to existing MediaAsset
+    profile_pic_updated_at: Optional[datetime] = None
+    profile_pic_url: Optional[str] = None
 
 
 class CreatorResponse(CreatorBase):
     '''Schema for Creator API responses.'''
     id: int
     platform_id: int
-    profile_pic_asset_id: Optional[int] = None
-    profile_pic_updated_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
     

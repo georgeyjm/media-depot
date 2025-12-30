@@ -17,7 +17,7 @@ class Creator(Base, TimestampMixin):
     display_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     
     profile_pic_asset_id: Mapped[Optional[int]] = mapped_column(ForeignKey('media_assets.id', ondelete='SET NULL'), nullable=True)
-    profile_pic_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)  # When profile pic was last cached
+    profile_pic_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)  # When profile pic was last cached
     profile_pic_url: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)  # Original URL from platform
     
     # Relationships

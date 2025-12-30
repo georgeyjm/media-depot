@@ -48,4 +48,5 @@ def healthcheck_db() -> bool:
         conn.execute(text('SELECT 1'))
     return True
 
+
 SessionDep = Annotated[Session, Depends(get_db)]
