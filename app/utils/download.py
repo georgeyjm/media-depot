@@ -24,6 +24,7 @@ def download_yt_dlp(url: str, download_dir: Path=settings.MEDIA_ROOT_DIR, extra_
         'paths': {'home': str(download_dir)},
         'outtmpl': '[%(id)s] %(title)s.%(ext)s',
         'format': 'bestvideo+bestaudio/best',
+        'cookiesfrombrowser': ('edge',),  # TODO: Better cookies handling system
     }
     ydl_options.update(extra_options)
     with YoutubeDL(ydl_options) as ydl:

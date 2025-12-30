@@ -40,6 +40,37 @@ def get_or_create_creator(db: Session, platform: Platform, post_info: PostInfo) 
     return creator
 
 
+def get_post(db: Session, platform: Platform, post_info: PostInfo) -> Post | None:
+    '''
+    Get a Post record by platform and post ID.
+    '''
+    return db.query(Post).filter_by(
+        platform_id=platform.id,
+        platform_post_id=post_info.platform_post_id
+    ).first()
+
+
+def create_post(db: Session, platform: Platform, post_info: PostInfo) -> Post:
+    '''
+    Create a Post record.
+    '''
+    creator = get_or_create_creator(db=db, platform=platform, post_info=post_info)
+    post = Post(
+        platform_id=platform.id,
+        creator_id=creator.id,
+        platform_post_id=post_info.platform_post_id,
+        post_type=post_info.post_type,
+        url=post_info.url,
+        share_url=post_info.share_url,
+        title=post_info.title,
+        caption_text=post_info.caption_text,
+        platform_created_at=post_info.platform_created_at,
+    )
+    db.add(post)
+    db.flush()
+    return post
+
+
 def get_or_create_post(db: Session, platform: Platform, post_info: PostInfo) -> Post:
     '''
     Get or create a Post record.
@@ -48,48 +79,42 @@ def get_or_create_post(db: Session, platform: Platform, post_info: PostInfo) -> 
         db: Database session
         platform: Platform instance
         post_info: db-agnostic PostInfo object containing post and creator information
-        
+    
     Returns:
         Post instance (existing or newly created)
     '''
-    post = db.query(Post).filter_by(
-        platform_id=platform.id,
-        platform_post_id=post_info.platform_post_id
-    ).first()
-    
+    post = get_post(db=db, platform=platform, post_info=post_info)
     if not post:
-        creator = get_or_create_creator(db=db, platform=platform, post_info=post_info)
-        post = Post(
-            platform_id=platform.id,
-            creator_id=creator.id,
-            platform_post_id=post_info.platform_post_id,
-            post_type=post_info.post_type,
-            url=post_info.url,
-            share_url=post_info.share_url,
-            title=post_info.title,
-            caption_text=post_info.caption_text,
-            platform_created_at=post_info.platform_created_at,
-        )
-        db.add(post)
-        db.flush()
-
+        post = create_post(db=db, platform=platform, post_info=post_info)
+    
     return post
 
 
-def create_media_asset(db: Session, media_asset_info: MediaAssetCreate) -> MediaAsset:
+def get_or_create_media_asset(db: Session, media_asset_info: MediaAssetCreate) -> MediaAsset:
     '''
-    Create a MediaAsset record and return the created instance.
+    Get or create a MediaAsset record (by file size and checksum).
     '''
-    media_asset = MediaAsset(
-        media_type=media_asset_info.media_type,
-        file_format=media_asset_info.file_format,
-        url=media_asset_info.url,
-        file_size=media_asset_info.file_size,
-        file_path=media_asset_info.file_path,
-        checksum_sha256=media_asset_info.checksum_sha256,
-    )
-    db.add(media_asset)
-    db.flush()
+    if media_asset_info.file_size is None:
+        media_asset = db.query(MediaAsset).filter_by(
+            checksum_sha256=media_asset_info.checksum_sha256
+        ).first()
+    else:
+        media_asset = db.query(MediaAsset).filter_by(
+            file_size=media_asset_info.file_size,
+            checksum_sha256=media_asset_info.checksum_sha256
+        ).first()
+
+    if not media_asset:
+        media_asset = MediaAsset(
+            media_type=media_asset_info.media_type,
+            file_format=media_asset_info.file_format,
+            url=media_asset_info.url,
+            file_size=media_asset_info.file_size,
+            file_path=media_asset_info.file_path,
+            checksum_sha256=media_asset_info.checksum_sha256,
+        )
+        db.add(media_asset)
+        db.flush()
 
     return media_asset
 

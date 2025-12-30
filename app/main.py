@@ -1,5 +1,3 @@
-'''FastAPI application entry point.'''
-
 from typing import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -32,9 +30,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         raise
     finally:
         db.close()
-    
     yield
-    
+
     # Shutdown: Cleanup if needed
     pass
 

@@ -10,7 +10,7 @@ from app.models import MediaAsset
 from app.models.enums import PostType, MediaType
 from app.schemas.post import PostInfo
 from app.schemas.media_asset import MediaAssetCreate
-from app.utils.db import get_or_create_post, create_media_asset, link_post_media_assets
+from app.utils.db import get_post, create_post, get_or_create_media_asset, link_post_media_assets
 from app.utils.download import download_yt_dlp, hash_file
 from app.utils.helpers import remove_query_params
 
@@ -105,7 +105,12 @@ class BilibiliHandler(BaseHandler):
         if post_info.post_type != PostType.video:
             raise NotImplementedError('Post is not a video.')
 
-        post = get_or_create_post(db=db, platform=self.PLATFORM, post_info=post_info)
+        # If post already exists, no download is performed.
+        post = get_post(db=db, platform=self.PLATFORM, post_info=post_info)
+        if post:
+            return post
+        
+        post = create_post(db=db, platform=self.PLATFORM, post_info=post_info)
         filepath = download_yt_dlp(url=post_info.url, download_dir=self.DOWNLOAD_DIR)
         media_asset_info = MediaAssetCreate(
             media_type=MediaType.video,
@@ -115,7 +120,7 @@ class BilibiliHandler(BaseHandler):
             file_path=str(filepath),
             checksum_sha256=hash_file(filepath),
         )
-        media_asset = create_media_asset(db=db, media_asset_info=media_asset_info)
+        media_asset = get_or_create_media_asset(db=db, media_asset_info=media_asset_info)
         # TODO: Does not handle multiple media assets per post.
         post_medias = link_post_media_assets(db=db, post=post, media_assets=[media_asset])
         db.commit()

@@ -1,6 +1,6 @@
 from typing import Optional
 
-from sqlalchemy import Integer, String, Text, BigInteger
+from sqlalchemy import Integer, String, Text, BigInteger, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models import Base, TimestampMixin
@@ -24,6 +24,11 @@ class MediaAsset(Base, TimestampMixin):
 
     # Relationships
     post_media_refs: Mapped[list['PostMedia']] = relationship(back_populates='media_asset')
+    
+    # Constraints and indexes
+    __table_args__ = (
+        Index('ix_media_assets_file_size_checksum', 'file_size', 'checksum_sha256'),
+    )
     
     def __repr__(self) -> str:
         return f'<MediaFile {self.file_type}:{self.file_path or self.url}>'
