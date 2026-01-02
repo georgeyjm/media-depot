@@ -50,6 +50,7 @@ logs/
 media/
 downloads/
 profile_pics/
+.cache/
 
 # OS generated files
 .DS_Store

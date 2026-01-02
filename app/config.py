@@ -9,9 +9,11 @@ class Settings(BaseSettings):
 
     DATABASE_URL: str = 'postgresql+psycopg://test:test@localhost:5432/mydb'
     SQL_ECHO: bool = False
-    MEDIA_ROOT_DIR: Path = Path('media/')
+    MEDIA_ROOT_DIR: Path = Path('media')
+    CACHE_DIR: Path = Path('.cache')
+    COOKIES_REFRESH_INTERVAL: int = 3600  # Default: 1 hour
     
-    @field_validator('MEDIA_ROOT_DIR', mode='before')
+    @field_validator('MEDIA_ROOT_DIR', 'CACHE_DIR', mode='before')
     @classmethod
     def convert_to_path(cls, v):
         return Path(v) if isinstance(v, str) else v
@@ -19,5 +21,6 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-# Ensure download directory exists
+# Ensure directories exist
 settings.MEDIA_ROOT_DIR.mkdir(parents=True, exist_ok=True)
+settings.CACHE_DIR.mkdir(parents=True, exist_ok=True)

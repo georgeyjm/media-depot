@@ -73,6 +73,8 @@ class BilibiliHandler(BaseHandler):
         if creator_el := self._soup.select_one('#mirror-vdcon .up-panel-container > .up-info-container'):
             # Post with single creator
             creator_name_el = creator_el.select_one('.up-detail a.up-name')
+            if creator_name_el is None:
+                raise ValueError('Cannot locate creator name.')
             creator_name = creator_name_el.text.strip()
             creator_url = remove_query_params(creator_name_el.get('href'))
             creator_platform_id = re.search(self.CREATOR_URL_PATTERN, creator_url).group(1)
@@ -80,11 +82,15 @@ class BilibiliHandler(BaseHandler):
         else:
             # Post with multiple creators, only take the first one
             creator_el = self._soup.select_one('#mirror-vdcon .up-panel-container > .members-info-container .membersinfo-upcard')
+            if creator_el is None:
+                raise ValueError('Cannot find creator information.')
             creator_info_el = creator_el.select_one('.staff-info > a')
+            if creator_info_el is None:
+                raise ValueError('Cannot find creator information.')
             creator_name = creator_info_el.text.strip()
             creator_url = creator_el.select_one('.staff-info > a').get('href')
             creator_platform_id = re.search(self.CREATOR_URL_PATTERN, creator_url).group(1)
-            profile_pic_url = creator_el.select_one('.avatar-img > img').get('src').split('@')[0]
+            profile_pic_url = None # creator_el.select_one('.avatar-img > img').get('src').split('@')[0]
 
         return PostInfo(
             platform_post_id=platform_post_id,
@@ -111,7 +117,10 @@ class BilibiliHandler(BaseHandler):
             return post
         
         post = create_post(db=db, platform=self.PLATFORM, post_info=post_info)
-        filepath = download_yt_dlp(url=post_info.url, download_dir=self.DOWNLOAD_DIR)
+        try:
+            filepath = download_yt_dlp(url=post_info.url, download_dir=self.DOWNLOAD_DIR)
+        except Exception as e:
+            pass
         media_asset_info = MediaAssetCreate(
             media_type=MediaType.video,
             file_format=filepath.suffix.lstrip('.'),
