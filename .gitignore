@@ -28,6 +28,7 @@ ENV/
 
 # Database
 *.db
+*.rdb
 *.sqlite3
 instance/
 

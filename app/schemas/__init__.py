@@ -28,6 +28,12 @@ from app.schemas.platform import (
     PlatformUpdate,
     PlatformResponse,
 )
+from app.schemas.job import (
+    JobBase,
+    JobCreate,
+    JobUpdate,
+    JobResponse,
+)
 
 
 __all__ = [
@@ -56,5 +62,10 @@ __all__ = [
     'PlatformCreate',
     'PlatformUpdate',
     'PlatformResponse',
+    # Job schemas
+    'JobBase',
+    'JobCreate',
+    'JobUpdate',
+    'JobResponse',
 ]
 

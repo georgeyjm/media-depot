@@ -35,6 +35,7 @@ from app.models.creator import Creator
 from app.models.post import Post
 from app.models.post_media import PostMedia
 from app.models.media_asset import MediaAsset
+from app.models.job import Job
 
 __all__ = [
     'Base',
@@ -44,4 +45,5 @@ __all__ = [
     'Post',
     'PostMedia',
     'MediaAsset',
+    'Job',
 ]

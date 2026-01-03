@@ -16,6 +16,14 @@ class MediaType(StrEnum):
     unknown = 'unknown'
 
 
+class JobStatus(StrEnum):
+    pending = 'pending'
+    processing = 'processing'
+    completed = 'completed'
+    failed = 'failed'
+    canceled = 'canceled'
+
+
 # class ScrapeMethod(StrEnum):
 #     api = 'api'
 #     html = 'html'

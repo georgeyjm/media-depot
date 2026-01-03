@@ -2,9 +2,41 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from app.models import Platform, Creator, Post, PostMedia, MediaAsset
+from app.models import Platform, Creator, Post, PostMedia, MediaAsset, Job
+from app.models.enums import JobStatus
 from app.schemas.post import PostInfo
 from app.schemas.media_asset import MediaAssetCreate
+
+
+def get_or_create_job_from_share(db: Session, share_text: str, share_url: str) -> Job:
+    '''
+    Create a new Job record from share text and URL.
+    
+    Args:
+        db: Database session
+        share_text: The share text containing the URL
+        share_url: The extracted share URL
+        
+    Returns:
+        Job instance
+    '''
+    # Check for existing active jobs (pending or processing)
+    job = db.query(Job).filter(
+        Job.share_url == share_url,
+        Job.status.in_([JobStatus.pending, JobStatus.processing])
+    ).first()
+    if job:
+        return job
+    
+    job = Job(
+        share_text=share_text,
+        share_url=share_url,
+        status=JobStatus.pending,
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return job
 
 
 def get_or_create_creator(db: Session, platform: Platform, post_info: PostInfo) -> Creator:

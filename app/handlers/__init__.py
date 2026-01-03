@@ -18,7 +18,7 @@ HANDLERS: list[Type[BaseHandler]] = [
 ]
 
 
-def get_handler_from_share(share_text: str) -> BaseHandler:
+def get_handler_from_share(share_text: str) -> BaseHandler | None:
     '''
     Get an instance of the appropriate handler for the given share text.
     
@@ -27,14 +27,27 @@ def get_handler_from_share(share_text: str) -> BaseHandler:
         
     Returns:
         The handler instance
-        
-    Raises:
-        ValueError: If no handler is found for the share text
     '''
     for handler_class in HANDLERS:
         if handler_class.supports_share(share_text):
             return handler_class()
-    raise ValueError(f'No handler found for share text: {share_text}')  # TODO: no exception should be raised, this should be handled gracefully
+    return None
+
+
+def extract_url_from_share(share_text: str) -> str | None:
+    '''
+    Extract the URL from the share text.
+    
+    Args:
+        share_text: Any share text containing a post URL
+        
+    Returns:
+        The extracted URL
+    '''
+    for handler_class in HANDLERS:
+        if url := handler_class.extract_url_from_share(share_text):
+            return url
+    return None
 
 
 def initialize_platforms(db: Session) -> None:

@@ -86,14 +86,14 @@ def _get_cookie_file() -> Optional[Path]:
         if _cookie_cache_info['last_extracted'] is not None:
             # Check if cache is still valid
             time_since_extraction = current_time - _cookie_cache_info['last_extracted']
-            if time_since_extraction < settings.COOKIE_REFRESH_INTERVAL_SECONDS:
+            if time_since_extraction < settings.COOKIES_REFRESH_INTERVAL:
                 needs_refresh = False
         else:
             # Cookie file exists but we don't have timestamp info
             # Use file modification time as fallback
             file_mtime = cookie_file.stat().st_mtime
             time_since_modification = current_time - file_mtime
-            if time_since_modification < settings.COOKIE_REFRESH_INTERVAL_SECONDS:
+            if time_since_modification < settings.COOKIES_REFRESH_INTERVAL:
                 needs_refresh = False
                 _cookie_cache_info['last_extracted'] = file_mtime
     

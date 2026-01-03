@@ -1,11 +1,12 @@
+from pathlib import Path
 from datetime import datetime
-from typing import Optional, TYPE_CHECKING
+from typing import Optional
 
 from sqlalchemy import String, DateTime, Text, ForeignKey, Index, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models import Base, TimestampMixin
-from app.models.enums import PostType
+from app.models.enums import PostType, JobStatus
 
 
 class Post(Base, TimestampMixin):
@@ -29,6 +30,7 @@ class Post(Base, TimestampMixin):
     platform: Mapped['Platform'] = relationship(back_populates='posts')
     creator: Mapped['Creator'] = relationship(back_populates='posts')
     media_items: Mapped[list['PostMedia']] = relationship(back_populates='post', cascade='all, delete-orphan')
+    jobs: Mapped[list['Job']] = relationship(back_populates='post', cascade='all, delete-orphan')
     
     # Constraints and indexes
     __table_args__ = (
@@ -39,4 +41,22 @@ class Post(Base, TimestampMixin):
     
     def __repr__(self) -> str:
         return f'<Post {self.platform_post_id}:{self.title or "Untitled"}>'
-
+    
+    def all_media_exists(self) -> bool:
+        '''Check if all media items exist on disk.
+        
+        Returns:
+            True if post has media_items and all files exist on disk, False otherwise.
+        '''
+        if not self.media_items:
+            return False  # No media items means nothing exists
+        return all(Path(post_media.media_asset.file_path).exists() for post_media in self.media_items)
+    
+    def has_completed_job(self) -> bool:
+        '''Check if there's at least one completed job for this post.
+        
+        Returns:
+            True if post has at least one job with status 'completed', False otherwise.
+        '''
+        # TODO: Maybe we should only consider the last job?
+        return any(job.status == JobStatus.completed for job in self.jobs)

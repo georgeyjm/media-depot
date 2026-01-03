@@ -9,9 +9,11 @@ class Settings(BaseSettings):
 
     DATABASE_URL: str = 'postgresql+psycopg://test:test@localhost:5432/mydb'
     SQL_ECHO: bool = False
+    REDIS_URL: str = 'redis://localhost:6379/0'
     MEDIA_ROOT_DIR: Path = Path('media')
     CACHE_DIR: Path = Path('.cache')
     COOKIES_REFRESH_INTERVAL: int = 3600  # Default: 1 hour
+    JOB_RETRIES: int = 3
     
     @field_validator('MEDIA_ROOT_DIR', 'CACHE_DIR', mode='before')
     @classmethod

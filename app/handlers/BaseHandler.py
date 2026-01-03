@@ -1,4 +1,5 @@
 import re
+from pathlib import Path
 from abc import ABC, abstractmethod
 from typing import Any, Optional, ClassVar
 
@@ -6,20 +7,22 @@ import httpx
 from bs4 import BeautifulSoup
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.models import Platform, MediaAsset
 from app.models.enums import PostType
-from app.config import settings
 
 
 class BaseHandler(ABC):
     '''Base class for all platform handlers.'''
 
-    PLATFORM: ClassVar[Optional[Platform]] = None  # Set during initialization
     PLATFORM_NAME: ClassVar[str] = ''
     PLATFORM_DISPLAY_NAME: ClassVar[str] = ''
     FULL_URL_PATTERNS: ClassVar[tuple[str, ...]] = ()
     SHORT_URL_PATTERNS: ClassVar[tuple[str, ...]] = ()
     CREATOR_URL_PATTERN: ClassVar[str] = ''
+    # Set during initialization
+    PLATFORM: ClassVar[Optional[Platform]] = None
+    DOWNLOAD_DIR: ClassVar[Optional[Path]] = None
 
     def __init__(self):
         self.client = httpx.Client(
@@ -35,6 +38,16 @@ class BaseHandler(ABC):
         self._response: Optional[httpx.Response] = None
         self._html: Optional[str] = None
         self._soup: Optional[BeautifulSoup] = None
+    
+    # @property
+    # def PLATFORM(self) -> Optional[Platform]:
+    #     '''Access the platform class variable from an instance.'''
+    #     return self.__class__.PLATFORM
+    
+    # @property
+    # def DOWNLOAD_DIR(self) -> Optional[Path]:
+    #     '''Access the download directory class variable from an instance.'''
+    #     return self.__class__.DOWNLOAD_DIR
     
     def __del__(self):
         '''Close the httpx client when handler is destroyed.'''
@@ -52,6 +65,14 @@ class BaseHandler(ABC):
         '''Check if the share text contains a supported URL.'''
         return any(re.search(pattern, share_text) for pattern in cls.FULL_URL_PATTERNS + cls.SHORT_URL_PATTERNS)
     
+    @classmethod
+    def extract_url_from_share(cls, share_text: str) -> str | None:
+        '''Extract the URL from the share text.'''
+        for pattern in cls.FULL_URL_PATTERNS + cls.SHORT_URL_PATTERNS:
+            if match := re.search(pattern, share_text):
+                return match.group(0)
+        return None
+
     @classmethod
     def ensure_platform_exists(cls, db: Session) -> Platform:
         '''

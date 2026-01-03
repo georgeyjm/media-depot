@@ -1,4 +1,5 @@
 import re
+from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -6,7 +7,7 @@ from bs4 import BeautifulSoup
 
 from app.handlers import BaseHandler
 from app.db import Session
-from app.models import MediaAsset
+from app.models import Post, PostMedia
 from app.models.enums import PostType, MediaType
 from app.schemas.post import PostInfo
 from app.schemas.media_asset import MediaAssetCreate
@@ -106,25 +107,31 @@ class BilibiliHandler(BaseHandler):
             profile_pic_url=profile_pic_url,
         )
     
-    def download(self, db: Session, post_info: PostInfo) -> list[MediaAsset]:
-        '''Download all media from the post.'''
-        if post_info.post_type != PostType.video:
+    # TODO: This can actually be a class method, or store post so it becomes an instance method
+    def download(self, db: Session, post: Post) -> list[PostMedia]:
+        '''Download all media from the post.
+        
+        Returns:
+            List of PostMedia objects.
+        '''
+        if post.post_type != PostType.video:
             raise NotImplementedError('Post is not a video.')
 
-        # If post already exists, no download is performed.
-        post = get_post(db=db, platform=self.PLATFORM, post_info=post_info)
-        if post:
-            return post
+        # Check if post already has media downloaded
+        # Fast path: if there's a completed job AND all files exist, skip download
+        # TODO: What if job record was deleted, or media downloaded without a job?
+        if post.has_completed_job() and post.all_media_exists():
+            return post.media_items
         
-        post = create_post(db=db, platform=self.PLATFORM, post_info=post_info)
+        # TODO: Use post.url or share_url? When to add URL?
         try:
-            filepath = download_yt_dlp(url=post_info.url, download_dir=self.DOWNLOAD_DIR)
+            filepath = download_yt_dlp(url=post.url, download_dir=self.DOWNLOAD_DIR)
         except Exception as e:
-            pass
+            raise
         media_asset_info = MediaAssetCreate(
             media_type=MediaType.video,
             file_format=filepath.suffix.lstrip('.'),
-            url=post_info.url,
+            url=post.url,
             file_size=filepath.stat().st_size,
             file_path=str(filepath),
             checksum_sha256=hash_file(filepath),
