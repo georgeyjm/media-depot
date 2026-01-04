@@ -1,9 +1,13 @@
 import time
 import hashlib
+import re
+import uuid
 from pathlib import Path
 from typing import Any, Optional, Literal
 from http.cookiejar import MozillaCookieJar
+from urllib.parse import urlparse, unquote
 
+import httpx
 from yt_dlp import YoutubeDL
 
 from app.config import settings
@@ -143,6 +147,128 @@ def download_yt_dlp(url: str, download_dir: Path=settings.MEDIA_ROOT_DIR, extra_
         info = ydl.extract_info(url, download=True)
         file_path = ydl.prepare_filename(info)
     return Path(file_path)
+
+
+def download_file(
+    url: str,
+    download_dir: Path = settings.MEDIA_ROOT_DIR,
+    filename: Optional[str] = None,
+    use_cookies: bool = False,
+    timeout: float = 30.0,
+    headers: Optional[dict[str, str]] = None,
+) -> Path:
+    '''
+    Download a file from a URL to a local directory.
+    
+    Args:
+        url: The URL of the file to download.
+        download_dir: The directory to download the file to. Defaults to MEDIA_ROOT_DIR.
+        filename: Optional filename for the downloaded file. If not provided, will be
+                  extracted from URL or Content-Disposition header.
+        use_cookies: Whether to use cookies from the cookie file. Defaults to False.
+        timeout: Request timeout in seconds. Defaults to 30.0.
+        headers: Optional custom headers to include in the request.
+    
+    Returns:
+        Path: The path to the downloaded file.
+    
+    Raises:
+        httpx.HTTPError: If the HTTP request fails.
+        httpx.TimeoutException: If the request times out.
+        ValueError: If filename cannot be determined.
+    '''
+    # Ensure download directory exists
+    download_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Prepare request headers
+    request_headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+    if headers:
+        request_headers.update(headers)
+    
+    # Prepare cookies if needed
+    cookies = None
+    if use_cookies:
+        cookie_file = _get_cookie_file()
+        if cookie_file and cookie_file.exists():
+            # Load cookies from file
+            cookie_jar = MozillaCookieJar()
+            cookie_jar.load(cookie_file, ignore_discard=True, ignore_expires=True)
+            cookies = dict(cookie_jar)
+    
+    with httpx.Client(cookies=cookies, timeout=timeout, follow_redirects=True) as client:
+        with client.stream('GET', url, headers=request_headers) as response:
+            response.raise_for_status()
+
+            # Determine file extension
+            content_type = response.headers.get('Content-Type', '')
+            if 'image/jpeg' in content_type or 'image/jpg' in content_type:
+                extension = '.jpg'
+            elif 'image/png' in content_type:
+                extension = '.png'
+            elif 'image/gif' in content_type:
+                extension = '.gif'
+            elif 'image/webp' in content_type:
+                extension = '.webp'
+            else:
+                # Try to extract from URL
+                parsed_url = urlparse(url)
+                path_ext = Path(parsed_url.path).suffix
+                extension = path_ext if path_ext else ''
+
+            # Determine filename
+            if filename:
+                final_filename = filename + extension
+            else:
+                # Try to get filename from Content-Disposition header
+                content_disposition = response.headers.get('Content-Disposition', '')
+                if content_disposition:
+                    # Extract filename from Content-Disposition header
+                    # Format: attachment; filename="file.jpg" or attachment; filename*=UTF-8''file.jpg
+                    filename_match = re.search(
+                        r'filename[*]?=(?:UTF-8\'\')?["\']?([^"\';]+)["\']?',
+                        content_disposition,
+                        re.IGNORECASE
+                    )
+                    if filename_match:
+                        final_filename = unquote(filename_match.group(1))
+                    else:
+                        # Fallback: extract from URL
+                        parsed_url = urlparse(url)
+                        final_filename = Path(unquote(parsed_url.path)).name
+                else:
+                    # Extract filename from URL
+                    parsed_url = urlparse(url)
+                    final_filename = Path(unquote(parsed_url.path)).name
+                
+                # If still no filename, generate one from URL
+                if not final_filename or final_filename == '/':
+                    # Generate filename from URL hash or use a default
+                    url_hash = hashlib.md5(url.encode()).hexdigest()[:8]
+                    final_filename = url_hash + extension
+            
+            # Ensure filename is safe
+            final_filename = re.sub(r'[<>:"/\\|?*]', '_', final_filename)
+            if not final_filename:
+                raise ValueError(f'Could not determine filename for URL: {url}')
+            
+            # Ensure we don't overwrite existing files
+            file_path = download_dir / final_filename
+            if file_path.exists():
+                # Find a unique filename by appending a short UUID
+                stem = file_path.stem
+                suffix = file_path.suffix
+                while file_path.exists():
+                    unique_id = uuid.uuid4().hex[:8]
+                    file_path = download_dir / f'{stem}_{unique_id}{suffix}'
+            
+            # Stream the file content to disk
+            with file_path.open('wb') as f:
+                for chunk in response.iter_bytes():
+                    f.write(chunk)
+            
+            return file_path
 
 
 def hash_file(file_path: Path, buffer_size: Optional[int]=None, hash_type: Literal['sha256', 'md5', 'sha1']='sha256') -> str:

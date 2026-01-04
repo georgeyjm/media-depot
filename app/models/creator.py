@@ -23,6 +23,7 @@ class Creator(Base, TimestampMixin):
     # Relationships
     platform: Mapped['Platform'] = relationship(back_populates='creators')
     posts: Mapped[list['Post']] = relationship(back_populates='creator', cascade='all, delete-orphan')
+    profile_pic: Mapped['MediaAsset'] = relationship(back_populates='creator', single_parent=True, cascade='all, delete-orphan')
     
     # Constraints and indexes
     __table_args__ = (

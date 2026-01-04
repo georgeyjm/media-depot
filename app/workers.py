@@ -44,14 +44,18 @@ def process_download_job(job_id: int) -> None:
         # TODO: Currently we are manually calling ensure_platform_exists, but this is not the most elegant solution
         if handler.PLATFORM is None:
             handler.__class__.ensure_platform_exists(db=db)
-        platform = handler.PLATFORM
         
         # Load the share URL and extract info
         handler.load(job.share_url)
         post_info = handler.extract_info()
+        if post_info is None:
+            job.status = JobStatus.failed
+            job.error = {'error': 'Post is non-existent'}
+            db.commit()
+            return
         
         # Get or create the post, and link job to post
-        post = get_or_create_post(db=db, platform=platform, post_info=post_info)
+        post = get_or_create_post(db=db, platform=handler.PLATFORM, post_info=post_info)
         job.post_id = post.id
         db.commit()
         

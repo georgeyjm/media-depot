@@ -24,6 +24,8 @@ class MediaAsset(Base, TimestampMixin):
 
     # Relationships
     post_media_refs: Mapped[list['PostMedia']] = relationship(back_populates='media_asset')
+    creator: Mapped[Optional['Creator']] = relationship(back_populates='profile_pic', cascade='all, delete-orphan')  # Profile pics
+    post: Mapped[Optional['Post']] = relationship(back_populates='thumbnail', cascade='all, delete-orphan')  # Post thumbnails
     
     # Constraints and indexes
     __table_args__ = (

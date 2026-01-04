@@ -11,7 +11,7 @@ from app.models import Post, PostMedia
 from app.models.enums import PostType, MediaType
 from app.schemas.post import PostInfo
 from app.schemas.media_asset import MediaAssetCreate
-from app.utils.db import get_post, create_post, get_or_create_media_asset, link_post_media_assets
+from app.utils.db import get_or_create_media_asset, link_post_media_assets
 from app.utils.download import download_yt_dlp, hash_file
 from app.utils.helpers import remove_query_params
 
@@ -45,10 +45,14 @@ class BilibiliHandler(BaseHandler):
         # TODO: BiliBili posts are not supported yet
         return PostType.video
     
-    def extract_info(self) -> PostInfo:
+    def extract_info(self) -> PostInfo | None:
         '''Extract post metadata and information.'''
         if not self._soup:
             self._soup = BeautifulSoup(self._html, 'html.parser')
+        
+        # Check if post is non-existent
+        if self._soup.select_one('.error-panel > .error-msg'):
+            return None
         
         # Extract video-related info
         url = remove_query_params(self._resolved_url)
@@ -79,7 +83,7 @@ class BilibiliHandler(BaseHandler):
             creator_name = creator_name_el.text.strip()
             creator_url = remove_query_params(creator_name_el.get('href'))
             creator_platform_id = re.search(self.CREATOR_URL_PATTERN, creator_url).group(1)
-            profile_pic_url = None  # creator_el.select_one('.up-avatar > .bili-avatar > img.bili-avatar-img').get('src').split('@')[0]
+            # profile_pic_url = creator_el.select_one('.up-avatar > .bili-avatar > img.bili-avatar-img').get('src').split('@')[0]
         else:
             # Post with multiple creators, only take the first one
             creator_el = self._soup.select_one('#mirror-vdcon .up-panel-container > .members-info-container .membersinfo-upcard')
@@ -91,7 +95,19 @@ class BilibiliHandler(BaseHandler):
             creator_name = creator_info_el.text.strip()
             creator_url = creator_el.select_one('.staff-info > a').get('href')
             creator_platform_id = re.search(self.CREATOR_URL_PATTERN, creator_url).group(1)
-            profile_pic_url = None # creator_el.select_one('.avatar-img > img').get('src').split('@')[0]
+            # profile_pic_url = creator_el.select_one('.avatar-img > img').get('src').split('@')[0]
+        profile_pic_url = re.search(r'"upData":\s*{[^}]+?"face":\s*"(.+?)"', self._html)
+        if profile_pic_url is not None:
+            # Convert unicode literals to actual characters
+            profile_pic_url = profile_pic_url.group(1).encode('utf-8').decode('unicode-escape')
+        thumbnail_url = re.search(r'<meta[^>]+itemprop="thumbnailUrl"[^>]+content="(.+?)"[^>]*>', self._html) or \
+            re.search(r'"thumbnailUrl":\s*\[\s*"([^"]+)".*?\],', self._html)
+        if thumbnail_url is not None:
+            thumbnail_url = thumbnail_url.group(1)
+            if thumbnail_url.startswith('//'):
+                thumbnail_url = 'https:' + thumbnail_url
+            if '@' in thumbnail_url:
+                thumbnail_url = thumbnail_url.split('@')[0]
 
         return PostInfo(
             platform_post_id=platform_post_id,
@@ -105,6 +121,7 @@ class BilibiliHandler(BaseHandler):
             username=creator_name,
             display_name=creator_name,
             profile_pic_url=profile_pic_url,
+            thumbnail_url=thumbnail_url,
         )
     
     # TODO: This can actually be a class method, or store post so it becomes an instance method

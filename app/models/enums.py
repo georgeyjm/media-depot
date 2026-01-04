@@ -13,6 +13,7 @@ class MediaType(StrEnum):
     live_photo = 'live_photo'
     live_video = 'live_video'
     profile_pic = 'profile_pic'
+    thumbnail = 'thumbnail'
     unknown = 'unknown'
 
 

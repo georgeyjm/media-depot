@@ -23,6 +23,7 @@ class PostInfo(PostBase):
     username: str
     display_name: Optional[str] = None
     profile_pic_url: Optional[str] = None
+    thumbnail_url: Optional[str] = None
 
 
 class PostCreate(PostBase):

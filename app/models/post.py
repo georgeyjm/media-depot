@@ -23,14 +23,15 @@ class Post(Base, TimestampMixin):
     title: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     caption_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     platform_created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    # thumbnail_url: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)  # Thumbnail URL
-    # thumbnail_local_path: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)  # Local cached thumbnail
+    thumbnail_asset_id: Mapped[Optional[int]] = mapped_column(ForeignKey('media_assets.id', ondelete='SET NULL'), nullable=True)
+    thumbnail_url: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)  # Original URL from platform
     
     # Relationships
     platform: Mapped['Platform'] = relationship(back_populates='posts')
     creator: Mapped['Creator'] = relationship(back_populates='posts')
     media_items: Mapped[list['PostMedia']] = relationship(back_populates='post', cascade='all, delete-orphan')
     jobs: Mapped[list['Job']] = relationship(back_populates='post', cascade='all, delete-orphan')
+    thumbnail: Mapped['MediaAsset'] = relationship(back_populates='post', single_parent=True, cascade='all, delete-orphan')
     
     # Constraints and indexes
     __table_args__ = (
