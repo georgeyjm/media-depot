@@ -37,3 +37,9 @@ For production, we use Docker for easy deployment.
 ```shell
 docker compose up --scale worker=4
 ```
+
+
+## Todo
+
+- Better cookie handling (browser cookies cannot be accessed inside Docker)
+- Better post error handling (non-existent/deleted posts)
