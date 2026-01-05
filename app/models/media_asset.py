@@ -19,7 +19,7 @@ class MediaAsset(Base, TimestampMixin):
 
     url: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)  # Original URL from platform
     file_size: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)  # File size in bytes
-    file_path: Mapped[str] = mapped_column(Text, nullable=False)
+    file_path: Mapped[str] = mapped_column(Text, nullable=False, index=True)
     checksum_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
 
     # Relationships

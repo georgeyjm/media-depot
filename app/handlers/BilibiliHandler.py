@@ -1,5 +1,4 @@
 import re
-from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -9,9 +8,8 @@ from app.handlers import BaseHandler
 from app.db import Session
 from app.models import Post, PostMedia
 from app.models.enums import PostType, MediaType
-from app.schemas.post import PostInfo
-from app.schemas.media_asset import MediaAssetCreate
-from app.utils.db import get_or_create_media_asset, link_post_media_assets
+from app.schemas import PostInfo, MediaAssetCreate
+from app.utils.db import get_or_create_media_asset, link_post_media_asset
 from app.utils.download import download_yt_dlp, hash_file
 from app.utils.helpers import remove_query_params
 
@@ -28,15 +26,6 @@ class BilibiliHandler(BaseHandler):
         r'https?://(?:www\.)?b23\.tv/[a-zA-Z0-9]+',  # Share URL
     )
     CREATOR_URL_PATTERN = r'(?:https?:)?//space\.bilibili\.com/(\d+)'
-    
-    # def resolve_url(self, url: str) -> str:
-    #     '''Resolve shortened Bilibili URLs (b23.tv) to actual post URL.'''
-    #     # If it's already a full URL, return as is
-    #     if re.search(r'bilibili\.com/video/', url):
-    #         return url
-        
-    #     # Follow redirects for shortened URLs
-    #     return super().resolve_url(url)
 
     def extract_media_urls(self) -> list[str]:
         raise NotImplementedError
@@ -147,15 +136,12 @@ class BilibiliHandler(BaseHandler):
             raise
         media_asset_info = MediaAssetCreate(
             media_type=MediaType.video,
-            file_format=filepath.suffix.lstrip('.'),
             url=post.url,
-            file_size=filepath.stat().st_size,
             file_path=str(filepath),
-            checksum_sha256=hash_file(filepath),
         )
         media_asset = get_or_create_media_asset(db=db, media_asset_info=media_asset_info)
         # TODO: Does not handle multiple media assets per post.
-        post_medias = link_post_media_assets(db=db, post=post, media_assets=[media_asset])
+        post_media = link_post_media_asset(db=db, post=post, media_asset=media_asset)
         db.commit()
 
-        return post_medias
+        return [post_media]

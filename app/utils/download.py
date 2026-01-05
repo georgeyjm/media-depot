@@ -153,9 +153,11 @@ def download_file(
     url: str,
     download_dir: Path = settings.MEDIA_ROOT_DIR,
     filename: Optional[str] = None,
+    extension_fallback: Optional[str] = None,
     use_cookies: bool = False,
     timeout: float = 30.0,
     headers: Optional[dict[str, str]] = None,
+    overwrite: bool = False,
 ) -> Path:
     '''
     Download a file from a URL to a local directory.
@@ -165,6 +167,7 @@ def download_file(
         download_dir: The directory to download the file to. Defaults to MEDIA_ROOT_DIR.
         filename: Optional filename for the downloaded file. If not provided, will be
                   extracted from URL or Content-Disposition header.
+        extension_fallback: Optional extension to use if the extension cannot be determined from the Content-Type header.
         use_cookies: Whether to use cookies from the cookie file. Defaults to False.
         timeout: Request timeout in seconds. Defaults to 30.0.
         headers: Optional custom headers to include in the request.
@@ -177,10 +180,7 @@ def download_file(
         httpx.TimeoutException: If the request times out.
         ValueError: If filename cannot be determined.
     '''
-    # Ensure download directory exists
-    download_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Prepare request headers
+    # Prepare request headers and cookies
     request_headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
@@ -211,11 +211,35 @@ def download_file(
                 extension = '.gif'
             elif 'image/webp' in content_type:
                 extension = '.webp'
+            elif 'video/mp4' in content_type:
+                extension = '.mp4'
+            elif 'video/webm' in content_type:
+                extension = '.webm'
+            elif 'video/quicktime' in content_type:
+                extension = '.mov'
+            elif 'video/x-msvideo' in content_type:
+                extension = '.avi'
+            elif 'video/x-matroska' in content_type:
+                extension = '.mkv'
+            elif 'video/3gpp' in content_type:
+                extension = '.3gp'
+            elif 'video/x-flv' in content_type:
+                extension = '.flv'
+            elif 'video/x-ms-wmv' in content_type:
+                extension = '.wmv'
             else:
                 # Try to extract from URL
                 parsed_url = urlparse(url)
                 path_ext = Path(parsed_url.path).suffix
-                extension = path_ext if path_ext else ''
+                if path_ext:
+                    extension = path_ext
+                elif extension_fallback:
+                    if extension_fallback.startswith('.'):
+                        extension = extension_fallback
+                    else:
+                        extension = '.' + extension_fallback
+            if extension == '.jpeg':
+                extension = '.jpg'
 
             # Determine filename
             if filename:
@@ -246,7 +270,9 @@ def download_file(
                 if not final_filename or final_filename == '/':
                     # Generate filename from URL hash or use a default
                     url_hash = hashlib.md5(url.encode()).hexdigest()[:8]
-                    final_filename = url_hash + extension
+                    final_filename = url_hash
+                
+                final_filename += extension
             
             # Ensure filename is safe
             final_filename = re.sub(r'[<>:"/\\|?*]', '_', final_filename)
@@ -255,7 +281,7 @@ def download_file(
             
             # Ensure we don't overwrite existing files
             file_path = download_dir / final_filename
-            if file_path.exists():
+            if not overwrite and file_path.exists():
                 # Find a unique filename by appending a short UUID
                 stem = file_path.stem
                 suffix = file_path.suffix

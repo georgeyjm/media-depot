@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Any
 
 from pydantic import BaseModel, ConfigDict
 
@@ -24,6 +24,7 @@ class PostInfo(PostBase):
     display_name: Optional[str] = None
     profile_pic_url: Optional[str] = None
     thumbnail_url: Optional[str] = None
+    creator_metadata: Optional[dict[str, Any]] = None
 
 
 class PostCreate(PostBase):

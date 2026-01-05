@@ -4,10 +4,10 @@ from typing import Optional
 from sqlalchemy import String, DateTime, ForeignKey, Index, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.models import Base, TimestampMixin
+from app.models import Base, TimestampMixin, MetadataJSONMixin
 
 
-class Creator(Base, TimestampMixin):
+class Creator(Base, TimestampMixin, MetadataJSONMixin):
     __tablename__ = 'creators'
     
     id: Mapped[int] = mapped_column(primary_key=True)

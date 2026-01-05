@@ -30,7 +30,7 @@ class BaseHandler(ABC):
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
             },
             follow_redirects=True,
-            timeout=10.0,
+            timeout=15.0,
         )
         # Instance state for cached page content
         self._current_url: Optional[str] = None
@@ -38,16 +38,6 @@ class BaseHandler(ABC):
         self._response: Optional[httpx.Response] = None
         self._html: Optional[str] = None
         self._soup: Optional[BeautifulSoup] = None
-    
-    # @property
-    # def PLATFORM(self) -> Optional[Platform]:
-    #     '''Access the platform class variable from an instance.'''
-    #     return self.__class__.PLATFORM
-    
-    # @property
-    # def DOWNLOAD_DIR(self) -> Optional[Path]:
-    #     '''Access the download directory class variable from an instance.'''
-    #     return self.__class__.DOWNLOAD_DIR
     
     def __del__(self):
         '''Close the httpx client when handler is destroyed.'''
@@ -107,6 +97,7 @@ class BaseHandler(ABC):
         # Initialize class variables
         cls.PLATFORM = platform
         cls.DOWNLOAD_DIR = settings.MEDIA_ROOT_DIR / platform.name
+        cls.DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
         
         return platform
 
@@ -176,27 +167,6 @@ class BaseHandler(ABC):
     def extract_info(self, url: str, html: str, share_url: Optional[str]) -> dict[str, Any]:
         '''Platform-specific implementation of extract_info.'''
         pass
-    
-    # def extract_info(self, url: str) -> dict[str, Any]:
-    #     '''Extract post metadata and information.
-        
-    #     This automatically loads the page if not already loaded.
-        
-    #     Args:
-    #         url: The URL to extract information from (can be share URL or actual URL)
-            
-    #     Returns:
-    #         Dict containing post information
-    #     '''
-    #     # Ensure page is loaded
-    #     resolved_url = self.load(url)
-    #     share_url = url if url != resolved_url else None
-        
-    #     # Extract info using cached HTML
-    #     info = self._extract_info_impl(resolved_url, self._html, share_url)
-    #     info['post_type'] = self.get_post_type(resolved_url)
-        
-    #     return info
 
     @abstractmethod
     def extract_media_urls(self, url: str) -> list[dict[str, Any]]:

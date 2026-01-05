@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict
 
@@ -12,6 +12,7 @@ class CreatorBase(BaseModel):
     profile_pic_url: Optional[str] = None
     profile_pic_updated_at: Optional[datetime] = None
     profile_pic_asset_id: Optional[int] = None  # Optional MediaAsset ID for profile picture
+    metadata_: Optional[dict[str, Any]] = None
 
 
 class CreatorCreate(CreatorBase):
@@ -23,9 +24,10 @@ class CreatorUpdate(BaseModel):
     '''Schema for updating a Creator.'''
     username: Optional[str] = None
     display_name: Optional[str] = None
-    profile_pic_asset_id: Optional[int] = None  # Set profile pic to existing MediaAsset
-    profile_pic_updated_at: Optional[datetime] = None
     profile_pic_url: Optional[str] = None
+    profile_pic_updated_at: Optional[datetime] = None
+    profile_pic_asset_id: Optional[int] = None  # Set profile pic to existing MediaAsset
+    metadata_: Optional[dict[str, Any]] = None
 
 
 class CreatorResponse(CreatorBase):

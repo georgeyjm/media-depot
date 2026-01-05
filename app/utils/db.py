@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -91,6 +92,7 @@ def get_or_create_creator(db: Session, platform: Platform, post_info: PostInfo, 
         profile_pic_asset_id=profile_pic_asset_id,
         profile_pic_updated_at=profile_pic_updated_at,
         profile_pic_url=profile_pic_url,
+        metadata_=post_info.creator_metadata,
     )
     db.add(creator)
     db.flush()
@@ -169,28 +171,33 @@ def get_or_create_post(db: Session, platform: Platform, post_info: PostInfo) -> 
 
 def get_or_create_media_asset(db: Session, media_asset_info: MediaAssetCreate) -> MediaAsset:
     '''
-    Get or create a MediaAsset record (by file size and checksum).
+    Get or create a MediaAsset record (by filepath, or by file size and checksum).
     '''
-    if media_asset_info.file_size is None:
-        media_asset = db.query(MediaAsset).filter_by(
-            checksum_sha256=media_asset_info.checksum_sha256
-        ).first()
-    else:
-        media_asset = db.query(MediaAsset).filter_by(
-            checksum_sha256=media_asset_info.checksum_sha256,
-            file_size=media_asset_info.file_size,
-        ).first()
+    file_path = Path(media_asset_info.file_path)
+    if not file_path.exists():
+        raise FileNotFoundError(f'File not found: {file_path}')
+    
+    file_checksum = hash_file(file_path)
+    file_size = file_path.stat().st_size
+
+    # Check if an entry with the same file path exists, or if an entry with the same checksum and size exists.
+    media_asset = db.query(MediaAsset).filter_by(
+        file_path=str(file_path)
+    ).first() or db.query(MediaAsset).filter_by(
+        checksum_sha256=file_checksum,
+        file_size=file_size,
+    ).first()
     
     if media_asset:
         return media_asset
     
     media_asset = MediaAsset(
         media_type=media_asset_info.media_type,
-        file_format=media_asset_info.file_format,
         url=media_asset_info.url,
-        file_size=media_asset_info.file_size,
-        file_path=media_asset_info.file_path,
-        checksum_sha256=media_asset_info.checksum_sha256,
+        file_path=str(file_path),
+        file_format=file_path.suffix.lstrip('.'),
+        file_size=file_size,
+        checksum_sha256=file_checksum,
     )
     db.add(media_asset)
     db.flush()
@@ -198,43 +205,52 @@ def get_or_create_media_asset(db: Session, media_asset_info: MediaAssetCreate) -
     return media_asset
 
 
-def download_media_asset_from_url(db: Session, url: str, media_type: MediaType, filename: Optional[str] = None) -> MediaAsset:
+def download_media_asset_from_url(
+    db: Session,
+    url: str,
+    media_type: MediaType,
+    download_dir: Optional[Path] = None,
+    filename: Optional[str] = None,
+    extension_fallback: Optional[str] = None,
+    ) -> MediaAsset:
     '''
     Download and create a MediaAsset record from a URL.
     Note the final filename may be different from the provided filename due to uniqueness constraints. Use the MediaAsset record's file_path to refer to the actual file.
     '''
     try:
-        download_dir = settings.MEDIA_ROOT_DIR / media_type.value
-        filepath = download_file(url=url, download_dir=download_dir, filename=filename)
+        if not download_dir:
+            download_dir = settings.MEDIA_ROOT_DIR / media_type.value
+        filepath = download_file(url=url, download_dir=download_dir, filename=filename, extension_fallback=extension_fallback)
     except Exception as e:
         raise
     
     media_asset_info = MediaAssetCreate(
         media_type=media_type,
-        file_format=filepath.suffix.lstrip('.'),
         url=url,
-        file_size=filepath.stat().st_size,
         file_path=str(filepath),
-        checksum_sha256=hash_file(filepath),
     )
     return get_or_create_media_asset(db=db, media_asset_info=media_asset_info)
 
 
-def link_post_media_assets(db: Session, post: Post, media_assets: list[MediaAsset]) -> list[PostMedia]:
+def link_post_media_asset(db: Session, post: Post, media_asset: MediaAsset, position: int = 0) -> PostMedia:
     '''
-    Link a list of MediaAsset records to a Post record.
+    Link a single MediaAsset record to a Post record.
     '''
-    # TODO: Currently post media positions are determined by the location in the list,
-    # this is both not ideal and doesn't support live photos. Need to rework this.
-    post_medias = []
-    for i, media_asset in enumerate(media_assets):
-        post_media = PostMedia(
-            post_id=post.id,
-            media_asset_id=media_asset.id,
-            position=i,
-        )
-        post_medias.append(post_media)
-        db.add(post_media)
+    # Check for duplicate entry
+    post_media = db.query(PostMedia).filter_by(
+        post_id=post.id,
+        media_asset_id=media_asset.id
+    ).first()
+
+    if post_media:
+        return post_media
+    
+    post_media = PostMedia(
+        post_id=post.id,
+        media_asset_id=media_asset.id,
+        position=position,
+    )
+    db.add(post_media)
     db.flush()
 
-    return post_medias
+    return post_media

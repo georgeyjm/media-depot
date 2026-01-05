@@ -18,6 +18,7 @@ from app.schemas.post_media import (
 )
 from app.schemas.post import (
     PostBase,
+    PostInfo,
     PostCreate,
     PostUpdate,
     PostResponse,
@@ -54,6 +55,7 @@ __all__ = [
     'PostMediaResponse',
     # Post schemas
     'PostBase',
+    'PostInfo',
     'PostCreate',
     'PostUpdate',
     'PostResponse',

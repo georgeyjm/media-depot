@@ -16,9 +16,12 @@ class MediaAssetBase(BaseModel):
     checksum_sha256: str
 
 
-class MediaAssetCreate(MediaAssetBase):
+class MediaAssetCreate(BaseModel):
     '''Schema for creating a new MediaAsset.'''
-    pass
+    media_type: MediaType
+    url: Optional[str] = None
+    file_path: str
+    # Everything else will be computed
 
 
 class MediaAssetUpdate(BaseModel):
