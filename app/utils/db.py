@@ -75,7 +75,7 @@ def get_or_create_creator(db: Session, platform: Platform, post_info: PostInfo, 
                 db=db,
                 url=post_info.profile_pic_url,
                 media_type=MediaType.profile_pic,
-                filename=f'{platform.name}_{post_info.username}',
+                filename=f'{platform.name}_{post_info.username or post_info.display_name or post_info.platform_account_id}',
             )
             profile_pic_url = profile_pic_asset.url
             profile_pic_asset_id = profile_pic_asset.id

@@ -10,7 +10,7 @@ from app.models import Post, PostMedia
 from app.models.enums import PostType, MediaType
 from app.schemas import PostInfo, MediaAssetCreate
 from app.utils.db import get_or_create_media_asset, link_post_media_asset
-from app.utils.download import download_yt_dlp, hash_file
+from app.utils.download import download_yt_dlp
 from app.utils.helpers import remove_query_params
 
 

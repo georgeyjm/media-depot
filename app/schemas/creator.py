@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict
 class CreatorBase(BaseModel):
     '''Base schema for Creator.'''
     platform_account_id: str
-    username: str
+    username: Optional[str] = None
     display_name: Optional[str] = None
     profile_pic_url: Optional[str] = None
     profile_pic_updated_at: Optional[datetime] = None

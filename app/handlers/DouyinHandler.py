@@ -1,9 +1,4 @@
 import re
-from pathlib import Path
-from datetime import datetime
-from zoneinfo import ZoneInfo
-
-from bs4 import BeautifulSoup
 
 from app.config import settings
 from app.handlers import BaseHandler
@@ -11,9 +6,7 @@ from app.db import Session
 from app.models import Post, PostMedia
 from app.models.enums import PostType, MediaType
 from app.schemas.post import PostInfo
-from app.schemas.media_asset import MediaAssetCreate
 from app.utils.db import download_media_asset_from_url, link_post_media_asset
-from app.utils.download import hash_file
 from app.utils.helpers import remove_query_params
 
 
@@ -35,8 +28,8 @@ class DouyinHandler(BaseHandler):
         raise NotImplementedError
     
     def get_post_type(self) -> PostType:
-        # TODO
-        pass
+        # TODO: Maybe remove
+        raise NotImplementedError
     
     def extract_info(self) -> PostInfo | None:
         '''Extract post metadata and information.'''
@@ -141,9 +134,9 @@ class DouyinHandler(BaseHandler):
         post_medias = []
         max_caption_length = 25
         if post.caption_text.startswith('#'):
-            filename_prefix = f'[{post.platform_post_id}] {post.caption_text[:20].strip()}'
+            filename_prefix = f'[{post.platform_post_id}] {post.caption_text[:max_caption_length].strip()}'
         else:
-            filename_prefix = f'[{post.platform_post_id}] {post.caption_text.split('#')[0][:20].strip()}'
+            filename_prefix = f'[{post.platform_post_id}] {post.caption_text.split('#')[0][:max_caption_length].strip()}'
 
         if post.post_type == PostType.carousel:
             if not self._images_data:

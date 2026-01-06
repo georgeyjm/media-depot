@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.handlers.BaseHandler import BaseHandler
 from app.handlers.BilibiliHandler import BilibiliHandler
 from app.handlers.DouyinHandler import DouyinHandler
-# from app.handlers.XhsHandler import XhsHandler
+from app.handlers.XhsHandler import XhsHandler
 # from app.handlers.YoutubeHandler import YoutubeHandler
 
 
@@ -13,7 +13,7 @@ from app.handlers.DouyinHandler import DouyinHandler
 HANDLERS: list[Type[BaseHandler]] = [
     BilibiliHandler,
     DouyinHandler,
-    # XhsHandler,
+    XhsHandler,
     # YoutubeHandler,
 ]
 
@@ -70,6 +70,7 @@ __all__ = [
     'BaseHandler',
     'BilibiliHandler',
     'DouyinHandler',
+    'XhsHandler',
     'HANDLERS',
     'get_handler_from_share',
     'extract_url_from_share',

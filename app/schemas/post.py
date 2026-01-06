@@ -20,7 +20,7 @@ class PostBase(BaseModel):
 class PostInfo(PostBase):
     '''Schema for database-agnostic extracted post metadata.'''
     platform_account_id: str
-    username: str
+    username: Optional[str] = None
     display_name: Optional[str] = None
     profile_pic_url: Optional[str] = None
     thumbnail_url: Optional[str] = None
