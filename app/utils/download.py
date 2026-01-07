@@ -238,6 +238,9 @@ def download_file(
                         extension = extension_fallback
                     else:
                         extension = '.' + extension_fallback
+                else:
+                    # This shouldn't happen
+                    extension = ''
             if extension == '.jpeg':
                 extension = '.jpg'
 

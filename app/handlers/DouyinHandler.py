@@ -33,10 +33,11 @@ class DouyinHandler(BaseHandler):
     
     def extract_info(self) -> PostInfo | None:
         '''Extract post metadata and information.'''
+        match = re.match(self.FULL_URL_PATTERNS[0], self._resolved_url)
+        if not match:
+            raise ValueError(f'Cannot process Douyin URL: {self._resolved_url}')
+        platform_post_type, platform_post_id = match.group(1, 2)
         
-        # TODO: Check if post is non-existent
-        
-        platform_post_type, platform_post_id = re.match(self.FULL_URL_PATTERNS[0], self._resolved_url).group(1, 2)
         url = remove_query_params(self._resolved_url)
         share_url = self._current_url
         post_type = {
@@ -128,6 +129,7 @@ class DouyinHandler(BaseHandler):
         # Check if post already has media downloaded
         # Fast path: if there's a completed job AND all files exist, skip download
         # TODO: What if job record was deleted, or media downloaded without a job?
+        # TODO: Currently, media is not downloaded but linked when a download fails even for one of the medias
         if post.has_completed_job() and post.all_media_exists():
             return post.media_items
         
@@ -144,8 +146,13 @@ class DouyinHandler(BaseHandler):
             # TODO: What if only one file fails to download?
             for i, image_data in enumerate(self._images_data):
                 # Webp images are slightly lower quality
-                urls = list(filter(lambda url: '.webp' not in url, image_data.get('url_list')))
-                url = urls[0] if urls else image_data.get('url_list')[-1]
+                urls = image_data.get('url_list')
+                if urls:
+                    urls = list(filter(lambda url: '.webp' not in url, urls))
+                    url = urls[0] if urls else image_data.get('url_list')[-1]
+                else:
+                    # IMPORTANT: It is possible for a live photo to only have the video part
+                    url = None
 
                 filename = f'{filename_prefix}_{i}'
                 media_type = MediaType.image
@@ -164,6 +171,9 @@ class DouyinHandler(BaseHandler):
                     post_media = link_post_media_asset(db=db, post=post, media_asset=media_asset, position=i)
                     post_medias.append(post_media)
 
+                if not url:
+                    # Skip empty URL
+                    continue
                 media_asset = download_media_asset_from_url(db=db, url=url, media_type=media_type, download_dir=self.DOWNLOAD_DIR, filename=filename)
                 post_media = link_post_media_asset(db=db, post=post, media_asset=media_asset, position=i)
                 post_medias.append(post_media)
@@ -176,7 +186,5 @@ class DouyinHandler(BaseHandler):
             media_asset = download_media_asset_from_url(db=db, url=url, media_type=MediaType.video, download_dir=self.DOWNLOAD_DIR, extension_fallback=extension, filename=filename_prefix)
             post_media = link_post_media_asset(db=db, post=post, media_asset=media_asset)
             post_medias.append(post_media)
-        
-        db.commit()
 
         return post_medias

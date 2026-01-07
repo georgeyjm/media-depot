@@ -142,6 +142,5 @@ class BilibiliHandler(BaseHandler):
         media_asset = get_or_create_media_asset(db=db, media_asset_info=media_asset_info)
         # TODO: Does not handle multiple media assets per post.
         post_media = link_post_media_asset(db=db, post=post, media_asset=media_asset)
-        db.commit()
 
         return [post_media]

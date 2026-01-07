@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -40,12 +41,12 @@ def get_or_create_job_from_share(db: Session, share_text: str, share_url: str) -
     )
     db.add(job)
     db.commit()
-    db.refresh(job)
+    # db.refresh(job)  # Uncomment if fields like created_at are needed
 
     return job
 
 
-def get_or_create_creator(db: Session, platform: Platform, post_info: PostInfo, download_profile_pic: bool = True) -> Creator:
+def get_or_create_creator(db: Session, platform: Platform, post_info: PostInfo, download_profile_pic: bool = True, commit: bool = True) -> Creator:
     '''
     Get or create a Creator record. Currently uses PostInfo object for consistency purposes.
     
@@ -65,10 +66,34 @@ def get_or_create_creator(db: Session, platform: Platform, post_info: PostInfo, 
     if creator:
         return creator
     
-    # Download and attach profile pic asset if provided
-    profile_pic_url = None
-    profile_pic_asset_id = None
-    profile_pic_updated_at = None
+    # No need for Pydantic verification here because we are relying on verified Platform and PostInfo objects
+    creator = Creator(
+        platform_id=platform.id,
+        platform_account_id=post_info.platform_account_id,
+        username=post_info.username,
+        display_name=post_info.display_name,
+        profile_pic_asset_id=None,
+        profile_pic_updated_at=None,
+        profile_pic_url=None,
+        metadata_=post_info.creator_metadata,
+    )
+    db.add(creator)
+    try:
+        db.flush()
+    except IntegrityError:
+        # Race condition: another worker created the creator between our query and insert
+        # Roll back the failed insert and query again
+        db.rollback()
+        creator = db.query(Creator).filter_by(
+            platform_id=platform.id,
+            platform_account_id=post_info.platform_account_id
+        ).first()
+        if not creator:
+            # This should never happen, but re-raise if it does
+            raise
+
+    # Process profile pic if provided
+    # Download and attach is performed after the creator is created to avoid race conditions.
     if download_profile_pic and post_info.profile_pic_url:
         try:
             profile_pic_asset = download_media_asset_from_url(
@@ -77,26 +102,14 @@ def get_or_create_creator(db: Session, platform: Platform, post_info: PostInfo, 
                 media_type=MediaType.profile_pic,
                 filename=f'{platform.name}_{post_info.username or post_info.display_name or post_info.platform_account_id}',
             )
-            profile_pic_url = profile_pic_asset.url
-            profile_pic_asset_id = profile_pic_asset.id
-            profile_pic_updated_at = datetime.now(timezone.utc)
+            creator.profile_pic_url = profile_pic_asset.url
+            creator.profile_pic_asset_id = profile_pic_asset.id
+            creator.profile_pic_updated_at = datetime.now(timezone.utc)
         except Exception:
             pass
     
-    # No need for Pydantic verification here because we are relying on verified Platform and PostInfo objects
-    creator = Creator(
-        platform_id=platform.id,
-        platform_account_id=post_info.platform_account_id,
-        username=post_info.username,
-        display_name=post_info.display_name,
-        profile_pic_asset_id=profile_pic_asset_id,
-        profile_pic_updated_at=profile_pic_updated_at,
-        profile_pic_url=profile_pic_url,
-        metadata_=post_info.creator_metadata,
-    )
-    db.add(creator)
-    db.flush()
-
+    if commit:
+        db.commit()
     return creator
 
 
@@ -110,28 +123,13 @@ def get_post(db: Session, platform: Platform, post_info: PostInfo) -> Post | Non
     ).first()
 
 
-def create_post(db: Session, platform: Platform, post_info: PostInfo, download_thumbnail: bool = True) -> Post:
+def create_post(db: Session, platform: Platform, post_info: PostInfo, download_thumbnail: bool = True, commit: bool = True) -> Post:
     '''
     Create a Post record.
     '''
+    # Should I use commit=False here? Less commits, but risk of race condition:
+    # after creating the creator, we spend time downloading the thumbnail, but another worker might create the post before we commit
     creator = get_or_create_creator(db=db, platform=platform, post_info=post_info)
-
-    # Download and attach thumbnail asset if provided
-    thumbnail_asset_id = None
-    thumbnail_url = None
-    if download_thumbnail and post_info.thumbnail_url:
-        try:
-            thumbnail_asset = download_media_asset_from_url(
-                db=db,
-                url=post_info.thumbnail_url,
-                media_type=MediaType.thumbnail,
-                filename=f'{platform.name}_{post_info.platform_post_id}',
-            )
-            thumbnail_asset_id = thumbnail_asset.id
-            thumbnail_url = thumbnail_asset.url
-        except Exception:
-            pass
-    
     post = Post(
         platform_id=platform.id,
         creator_id=creator.id,
@@ -142,15 +140,41 @@ def create_post(db: Session, platform: Platform, post_info: PostInfo, download_t
         title=post_info.title,
         caption_text=post_info.caption_text,
         platform_created_at=post_info.platform_created_at,
-        thumbnail_asset_id=thumbnail_asset_id,
-        thumbnail_url=thumbnail_url,
+        thumbnail_asset_id=None,
+        thumbnail_url=post_info.thumbnail_url,
     )
     db.add(post)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        # Race condition: another worker created the post between our query and insert
+        # Roll back the failed insert and query again
+        db.rollback()
+        post = get_post(db=db, platform=platform, post_info=post_info)
+        if not post:
+            # This should never happen, but re-raise if it does
+            raise
+
+    # Download and attach thumbnail asset if provided
+    # Download and attach is performed after the post is created to avoid race conditions.
+    if download_thumbnail and post_info.thumbnail_url:
+        try:
+            thumbnail_asset = download_media_asset_from_url(
+                db=db,
+                url=post_info.thumbnail_url,
+                media_type=MediaType.thumbnail,
+                filename=f'{platform.name}_{post_info.platform_post_id}',
+            )
+            post.thumbnail_asset_id = thumbnail_asset.id
+        except Exception:
+            pass
+    
+    if commit:
+        db.commit()
     return post
 
 
-def get_or_create_post(db: Session, platform: Platform, post_info: PostInfo) -> Post:
+def get_or_create_post(db: Session, platform: Platform, post_info: PostInfo, commit: bool = True) -> Post:
     '''
     Get or create a Post record.
     
@@ -164,12 +188,12 @@ def get_or_create_post(db: Session, platform: Platform, post_info: PostInfo) -> 
     '''
     post = get_post(db=db, platform=platform, post_info=post_info)
     if not post:
-        post = create_post(db=db, platform=platform, post_info=post_info)
+        post = create_post(db=db, platform=platform, post_info=post_info, commit=commit)
     
     return post
 
 
-def get_or_create_media_asset(db: Session, media_asset_info: MediaAssetCreate) -> MediaAsset:
+def get_or_create_media_asset(db: Session, media_asset_info: MediaAssetCreate, commit: bool = True) -> MediaAsset:
     '''
     Get or create a MediaAsset record (by filepath, or by file size and checksum).
     '''
@@ -200,7 +224,10 @@ def get_or_create_media_asset(db: Session, media_asset_info: MediaAssetCreate) -
         checksum_sha256=file_checksum,
     )
     db.add(media_asset)
-    db.flush()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
 
     return media_asset
 
@@ -212,6 +239,7 @@ def download_media_asset_from_url(
     download_dir: Optional[Path] = None,
     filename: Optional[str] = None,
     extension_fallback: Optional[str] = None,
+    commit: bool = True,
     ) -> MediaAsset:
     '''
     Download and create a MediaAsset record from a URL.
@@ -229,10 +257,10 @@ def download_media_asset_from_url(
         url=url,
         file_path=str(filepath),
     )
-    return get_or_create_media_asset(db=db, media_asset_info=media_asset_info)
+    return get_or_create_media_asset(db=db, media_asset_info=media_asset_info, commit=commit)
 
 
-def link_post_media_asset(db: Session, post: Post, media_asset: MediaAsset, position: int = 0) -> PostMedia:
+def link_post_media_asset(db: Session, post: Post, media_asset: MediaAsset, position: int = 0, commit: bool = True) -> PostMedia:
     '''
     Link a single MediaAsset record to a Post record.
     '''
@@ -251,6 +279,9 @@ def link_post_media_asset(db: Session, post: Post, media_asset: MediaAsset, posi
         position=position,
     )
     db.add(post_media)
-    db.flush()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
 
     return post_media

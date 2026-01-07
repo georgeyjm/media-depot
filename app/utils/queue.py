@@ -20,6 +20,6 @@ def get_queue(name: str = 'downloads') -> Queue:
 def enqueue_job(job: Job) -> None:
     '''Enqueue a job to the queue.'''
     queue = get_queue()
-    base_interval = 30  # seconds
-    intervals = [base_interval * 2**i for i in range(settings.JOB_RETRIES)]
+    base_interval = 15  # seconds
+    intervals = [base_interval * 2**i for i in range(settings.JOB_RETRIES + 1)]
     queue.enqueue(process_download_job, job.id, retry=Retry(max=settings.JOB_RETRIES, interval=intervals))

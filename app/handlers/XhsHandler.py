@@ -152,7 +152,5 @@ class XhsHandler(BaseHandler):
                 media_asset = download_media_asset_from_url(db=db, url=image_url, media_type=media_type, download_dir=self.DOWNLOAD_DIR, filename=filename)
                 post_media = link_post_media_asset(db=db, post=post, media_asset=media_asset, position=i)
                 post_medias.append(post_media)
-        
-        db.commit()
 
         return post_medias

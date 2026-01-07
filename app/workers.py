@@ -1,5 +1,6 @@
 import traceback
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.db import SessionLocal
 from app.config import settings
@@ -61,8 +62,6 @@ def process_download_job(job_id: int) -> None:
         
         # Download the post (handler will check if already downloaded)
         post_medias = handler.download(db=db, post=post)
-        
-        # Mark job as completed
         job.status = JobStatus.completed
         db.commit()
         
@@ -77,9 +76,19 @@ def process_download_job(job_id: int) -> None:
                 'message': str(e),
                 'traceback': traceback.format_exc(),
             }
-            if job.error and isinstance(job.error, dict) and 'attempts' in job.error:
+            
+            # NotImplementedError should not be retried - mark as failed immediately
+            if isinstance(e, NotImplementedError):
+                job.status = JobStatus.failed
+                job.error = {'attempts': [error_info]}
+                db.commit()
+                return  # Don't retry, just return
+            
+            if job.error and 'attempts' in job.error:
                 # Append to existing attempts
                 job.error['attempts'].append(error_info)
+                # Explicitly mark the field as modified since SQLAlchemy doesn't detect in-place mutations
+                flag_modified(job, 'error')
             else:
                 job.error = {'attempts': [error_info]}
             
