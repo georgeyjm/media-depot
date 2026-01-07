@@ -158,9 +158,11 @@ def download_file(
     timeout: float = 30.0,
     headers: Optional[dict[str, str]] = None,
     overwrite: bool = False,
+    max_retries: int = 3,
+    retry_delay: float = 2.0,
 ) -> Path:
     '''
-    Download a file from a URL to a local directory.
+    Download a file from any URL to a local directory.
     
     Args:
         url: The URL of the file to download.
@@ -169,15 +171,18 @@ def download_file(
                   extracted from URL or Content-Disposition header.
         extension_fallback: Optional extension to use if the extension cannot be determined from the Content-Type header.
         use_cookies: Whether to use cookies from the cookie file. Defaults to False.
-        timeout: Request timeout in seconds. Defaults to 30.0.
+        timeout: Request timeout in seconds. Defaults to 30.0. For large files, consider using a larger value (e.g., 600.0).
         headers: Optional custom headers to include in the request.
+        overwrite: Whether to overwrite existing files. Defaults to False.
+        max_retries: Maximum number of retry attempts for failed downloads. Defaults to 3.
+        retry_delay: Initial delay between retries in seconds. Defaults to 2.0. Will be doubled on each retry.
     
     Returns:
         Path: The path to the downloaded file.
     
     Raises:
-        httpx.HTTPError: If the HTTP request fails.
-        httpx.TimeoutException: If the request times out.
+        httpx.HTTPError: If the HTTP request fails after all retries.
+        httpx.TimeoutException: If the request times out after all retries.
         ValueError: If filename cannot be determined.
     '''
     # Prepare request headers and cookies
@@ -197,107 +202,158 @@ def download_file(
             cookie_jar.load(cookie_file, ignore_discard=True, ignore_expires=True)
             cookies = dict(cookie_jar)
     
-    with httpx.Client(cookies=cookies, timeout=timeout, follow_redirects=True) as client:
-        with client.stream('GET', url, headers=request_headers) as response:
-            response.raise_for_status()
+    # For large files, we need a much longer read timeout
+    # Default timeout is 30s, but for large files we should use at least 600s (10 minutes)
+    # If timeout is the default 30s, use a more generous timeout for large file downloads
+    if timeout <= 30.0:
+        # Use a longer timeout for large files - 10 minutes should be enough for most cases
+        # Connect timeout: 10s, Read timeout: 600s, Write timeout: 30s, Pool timeout: 10s
+        httpx_timeout = httpx.Timeout(
+            connect=10.0,
+            read=600.0,  # 10 minutes for reading large files
+            write=30.0,
+            pool=10.0,
+        )
+    else:
+        # Use the provided timeout, but still separate connect/read/write
+        httpx_timeout = httpx.Timeout(
+            connect=10.0,
+            read=timeout,
+            write=30.0,
+            pool=10.0,
+        )
+    
+    last_exception = None
+    for attempt in range(max_retries):
+        try:
+            with httpx.Client(cookies=cookies, timeout=httpx_timeout, follow_redirects=True) as client:
+                with client.stream('GET', url, headers=request_headers) as response:
+                    response.raise_for_status()
 
-            # Determine file extension
-            content_type = response.headers.get('Content-Type', '')
-            if 'image/jpeg' in content_type or 'image/jpg' in content_type:
-                extension = '.jpg'
-            elif 'image/png' in content_type:
-                extension = '.png'
-            elif 'image/gif' in content_type:
-                extension = '.gif'
-            elif 'image/webp' in content_type:
-                extension = '.webp'
-            elif 'video/mp4' in content_type:
-                extension = '.mp4'
-            elif 'video/webm' in content_type:
-                extension = '.webm'
-            elif 'video/quicktime' in content_type:
-                extension = '.mov'
-            elif 'video/x-msvideo' in content_type:
-                extension = '.avi'
-            elif 'video/x-matroska' in content_type:
-                extension = '.mkv'
-            elif 'video/3gpp' in content_type:
-                extension = '.3gp'
-            elif 'video/x-flv' in content_type:
-                extension = '.flv'
-            elif 'video/x-ms-wmv' in content_type:
-                extension = '.wmv'
-            else:
-                # Try to extract from URL
-                parsed_url = urlparse(url)
-                path_ext = Path(parsed_url.path).suffix
-                if path_ext:
-                    extension = path_ext
-                elif extension_fallback:
-                    if extension_fallback.startswith('.'):
-                        extension = extension_fallback
+                    # Determine file extension
+                    content_type = response.headers.get('Content-Type', '')
+                    if 'image/jpeg' in content_type or 'image/jpg' in content_type:
+                        extension = '.jpg'
+                    elif 'image/png' in content_type:
+                        extension = '.png'
+                    elif 'image/gif' in content_type:
+                        extension = '.gif'
+                    elif 'image/webp' in content_type:
+                        extension = '.webp'
+                    elif 'video/mp4' in content_type:
+                        extension = '.mp4'
+                    elif 'video/webm' in content_type:
+                        extension = '.webm'
+                    elif 'video/quicktime' in content_type:
+                        extension = '.mov'
+                    elif 'video/x-msvideo' in content_type:
+                        extension = '.avi'
+                    elif 'video/x-matroska' in content_type:
+                        extension = '.mkv'
+                    elif 'video/3gpp' in content_type:
+                        extension = '.3gp'
+                    elif 'video/x-flv' in content_type:
+                        extension = '.flv'
+                    elif 'video/x-ms-wmv' in content_type:
+                        extension = '.wmv'
                     else:
-                        extension = '.' + extension_fallback
-                else:
-                    # This shouldn't happen
-                    extension = ''
-            if extension == '.jpeg':
-                extension = '.jpg'
-
-            # Determine filename
-            if filename:
-                final_filename = filename + extension
-            else:
-                # Try to get filename from Content-Disposition header
-                content_disposition = response.headers.get('Content-Disposition', '')
-                if content_disposition:
-                    # Extract filename from Content-Disposition header
-                    # Format: attachment; filename="file.jpg" or attachment; filename*=UTF-8''file.jpg
-                    filename_match = re.search(
-                        r'filename[*]?=(?:UTF-8\'\')?["\']?([^"\';]+)["\']?',
-                        content_disposition,
-                        re.IGNORECASE
-                    )
-                    if filename_match:
-                        final_filename = unquote(filename_match.group(1))
-                    else:
-                        # Fallback: extract from URL
+                        # Try to extract from URL
                         parsed_url = urlparse(url)
-                        final_filename = Path(unquote(parsed_url.path)).name
-                else:
-                    # Extract filename from URL
-                    parsed_url = urlparse(url)
-                    final_filename = Path(unquote(parsed_url.path)).name
-                
-                # If still no filename, generate one from URL
-                if not final_filename or final_filename == '/':
-                    # Generate filename from URL hash or use a default
-                    url_hash = hashlib.md5(url.encode()).hexdigest()[:8]
-                    final_filename = url_hash
-                
-                final_filename += extension
-            
-            # Ensure filename is safe
-            final_filename = re.sub(r'[<>:"/\\|?*]', '_', final_filename)
-            if not final_filename:
-                raise ValueError(f'Could not determine filename for URL: {url}')
-            
-            # Ensure we don't overwrite existing files
-            file_path = download_dir / final_filename
-            if not overwrite and file_path.exists():
-                # Find a unique filename by appending a short UUID
-                stem = file_path.stem
-                suffix = file_path.suffix
-                while file_path.exists():
-                    unique_id = uuid.uuid4().hex[:8]
-                    file_path = download_dir / f'{stem}_{unique_id}{suffix}'
-            
-            # Stream the file content to disk
-            with file_path.open('wb') as f:
-                for chunk in response.iter_bytes():
-                    f.write(chunk)
-            
-            return file_path
+                        path_ext = Path(parsed_url.path).suffix
+                        if path_ext:
+                            extension = path_ext
+                        elif extension_fallback:
+                            if extension_fallback.startswith('.'):
+                                extension = extension_fallback
+                            else:
+                                extension = '.' + extension_fallback
+                        else:
+                            # This shouldn't happen
+                            extension = ''
+                    if extension == '.jpeg':
+                        extension = '.jpg'
+
+                    # Determine filename
+                    if filename:
+                        final_filename = filename + extension
+                    else:
+                        # Try to get filename from Content-Disposition header
+                        content_disposition = response.headers.get('Content-Disposition', '')
+                        if content_disposition:
+                            # Extract filename from Content-Disposition header
+                            # Format: attachment; filename="file.jpg" or attachment; filename*=UTF-8''file.jpg
+                            filename_match = re.search(
+                                r'filename[*]?=(?:UTF-8\'\')?["\']?([^"\';]+)["\']?',
+                                content_disposition,
+                                re.IGNORECASE
+                            )
+                            if filename_match:
+                                final_filename = unquote(filename_match.group(1))
+                            else:
+                                # Fallback: extract from URL
+                                parsed_url = urlparse(url)
+                                final_filename = Path(unquote(parsed_url.path)).name
+                        else:
+                            # Extract filename from URL
+                            parsed_url = urlparse(url)
+                            final_filename = Path(unquote(parsed_url.path)).name
+                        
+                        # If still no filename, generate one from URL
+                        if not final_filename or final_filename == '/':
+                            # Generate filename from URL hash or use a default
+                            url_hash = hashlib.md5(url.encode()).hexdigest()[:8]
+                            final_filename = url_hash
+                        
+                        final_filename += extension
+                    
+                    # Ensure filename is safe
+                    final_filename = re.sub(r'[<>:"/\\|?*]', '_', final_filename)
+                    if not final_filename:
+                        raise ValueError(f'Could not determine filename for URL: {url}')
+                    
+                    # Ensure we don't overwrite existing files
+                    file_path = download_dir / final_filename
+                    if not overwrite and file_path.exists():
+                        # Find a unique filename by appending a short UUID
+                        stem = file_path.stem
+                        suffix = file_path.suffix
+                        while file_path.exists():
+                            unique_id = uuid.uuid4().hex[:8]
+                            file_path = download_dir / f'{stem}_{unique_id}{suffix}'
+                    
+                    # Stream the file content to disk with chunk size control
+                    # Use a larger chunk size (1MB) for better performance with large files
+                    chunk_size = 1024 * 1024  # 1MB chunks
+                    with file_path.open('wb') as f:
+                        for chunk in response.iter_bytes(chunk_size=chunk_size):
+                            f.write(chunk)
+                    
+                    return file_path
+        
+        except (httpx.RemoteProtocolError, httpx.ReadTimeout, httpx.ConnectTimeout) as e:
+            last_exception = e
+            if attempt < max_retries - 1:
+                # Exponential backoff: wait before retrying
+                wait_time = retry_delay * (2 ** attempt)
+                time.sleep(wait_time)
+                continue
+            else:
+                # Last attempt failed, re-raise the exception
+                raise
+        except httpx.HTTPStatusError as e:
+            # Don't retry on HTTP status errors (4xx, 5xx) unless it's a 5xx server error
+            if e.response.status_code >= 500 and attempt < max_retries - 1:
+                last_exception = e
+                wait_time = retry_delay * (2 ** attempt)
+                time.sleep(wait_time)
+                continue
+            else:
+                raise
+    
+    # If we get here, all retries failed
+    if last_exception:
+        raise last_exception
+    raise httpx.HTTPError(f'Failed to download {url} after {max_retries} attempts')
 
 
 def hash_file(file_path: Path, buffer_size: Optional[int]=None, hash_type: Literal['sha256', 'md5', 'sha1']='sha256') -> str:
