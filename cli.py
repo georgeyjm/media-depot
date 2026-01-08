@@ -386,6 +386,7 @@ def batch_download_from_file(
     queue_size: int = 15,
     poll_interval: float = 2.0,
     wait: bool = True,
+    retry: bool = False,
 ) -> None:
     '''
     Batch download from a file with optional queue management and polling.
@@ -400,6 +401,7 @@ def batch_download_from_file(
         queue_size: Maximum number of concurrent jobs in the queue (only used if wait=True)
         poll_interval: Interval in seconds between polling job status (only used if wait=True)
         wait: If True, manage queue and poll for completion. If False, just submit all jobs and exit.
+        retry: If True, also retry jobs with status 'failed' or 'error' (default: False)
     '''
     # Load or convert jobs file
     jobs, json_file = load_or_convert_jobs_file(input_file)
@@ -423,14 +425,25 @@ def batch_download_from_file(
                     pbar.update(1)
                     continue
                 
-                # Skip if already completed or failed
+                # Skip if already completed or canceled
                 job_status = job.get('status', 'pending')
-                if job_status in ('completed', 'failed', 'error', 'canceled'):
+                if job_status in ('completed', 'canceled'):
                     skipped += 1
                     pbar.update(1)
                     continue
                 
-                # Skip if already has a job_id (already submitted)
+                # Handle failed/error jobs based on retry flag
+                if job_status in ('failed', 'error'):
+                    if retry:
+                        # Clear old job data to retry as new job
+                        jobs[job_index]['data'] = None
+                        jobs[job_index]['status'] = 'pending'
+                    else:
+                        skipped += 1
+                        pbar.update(1)
+                        continue
+                
+                # Skip if already has a job_id (already submitted) and not retrying
                 if job.get('data') and job['data'].get('job_id'):
                     skipped += 1
                     pbar.update(1)
@@ -495,12 +508,23 @@ def batch_download_from_file(
                         pbar.update(1)
                         continue
                     
-                    # Skip if already completed or failed
+                    # Skip if already completed or canceled
                     job_status = job.get('status', 'pending')
-                    if job_status in ('completed', 'failed', 'error', 'canceled'):
+                    if job_status in ('completed', 'canceled'):
                         job_index += 1
                         pbar.update(1)
                         continue
+                    
+                    # Handle failed/error jobs based on retry flag
+                    if job_status in ('failed', 'error'):
+                        if retry:
+                            # Clear old job data to retry as new job
+                            jobs[job_index]['data'] = None
+                            jobs[job_index]['status'] = 'pending'
+                        else:
+                            job_index += 1
+                            pbar.update(1)
+                            continue
                     
                     # If job has a job_id but status is still pending/processing, 
                     # add it back to the queue to monitor it
@@ -594,6 +618,12 @@ Examples:
         help='Submit all jobs to API and exit immediately (no queue management or polling)'
     )
     
+    parser.add_argument(
+        '--retry',
+        action='store_true',
+        help='Also retry jobs with status "failed" or "error"'
+    )
+    
     args = parser.parse_args()
     
     # Validate that exactly one of --share or --file is provided
@@ -611,7 +641,7 @@ Examples:
         success = download_share(args.share)
         sys.exit(0 if success else 1)
     else:
-        batch_download_from_file(args.file, wait=not args.no_wait)
+        batch_download_from_file(args.file, wait=not args.no_wait, retry=args.retry)
 
 
 if __name__ == '__main__':
