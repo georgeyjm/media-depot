@@ -17,6 +17,7 @@ class DouyinHandler(BaseHandler):
     PLATFORM_DISPLAY_NAME = '抖音'
     FULL_URL_PATTERNS = (
         r'https?://(?:www\.)?douyin\.com/([a-zA-Z]+)/(\d+)/?',
+        r'https?://(?:www\.)?iesdouyin\.com/share/([a-zA-Z]+)/(\d+)/?',
     )
     SHORT_URL_PATTERNS = (
         r'https?://v\.douyin\.com/[a-zA-Z0-9_-]+/?',  # Share URL
@@ -33,8 +34,10 @@ class DouyinHandler(BaseHandler):
     
     def extract_info(self) -> PostInfo | None:
         '''Extract post metadata and information.'''
-        match = re.match(self.FULL_URL_PATTERNS[0], self._resolved_url)
-        if not match:
+        for pattern in self.FULL_URL_PATTERNS:
+            if match := re.match(pattern, self._resolved_url):
+                break
+        else:
             raise ValueError(f'Cannot process Douyin URL: {self._resolved_url}')
         platform_post_type, platform_post_id = match.group(1, 2)
         
@@ -43,6 +46,7 @@ class DouyinHandler(BaseHandler):
         post_type = {
             'video': PostType.video,
             'note': PostType.carousel,
+            'slides': PostType.carousel,
         }.get(platform_post_type, PostType.unknown)
 
         # Use third-party API to extract post info and download links
@@ -167,14 +171,14 @@ class DouyinHandler(BaseHandler):
                         key=lambda k: live_video_data.get(k, {}).get('data_size', 0),
                     )
                     live_video_url = live_video_data.get(source_key).get('url_list')[0]  # Maybe we should consider having the entire list so we can retry different URLs
-                    media_asset = download_media_asset_from_url(db=db, url=live_video_url, media_type=MediaType.live_video, download_dir=self.DOWNLOAD_DIR, filename=filename)
+                    media_asset = download_media_asset_from_url(db=db, url=live_video_url, media_type=MediaType.live_video, download_dir=self.DOWNLOAD_DIR, filename=filename, use_cookies=True)
                     post_media = link_post_media_asset(db=db, post=post, media_asset=media_asset, position=i)
                     post_medias.append(post_media)
 
                 if not url:
                     # Skip empty URL
                     continue
-                media_asset = download_media_asset_from_url(db=db, url=url, media_type=media_type, download_dir=self.DOWNLOAD_DIR, filename=filename)
+                media_asset = download_media_asset_from_url(db=db, url=url, media_type=media_type, download_dir=self.DOWNLOAD_DIR, filename=filename, use_cookies=True)
                 post_media = link_post_media_asset(db=db, post=post, media_asset=media_asset, position=i)
                 post_medias.append(post_media)
                 
@@ -183,7 +187,7 @@ class DouyinHandler(BaseHandler):
             max_format = max(formats, key=lambda f: f.get('bit_rate'))  # Can also use formats.get('play_addr').get('data_size'). Also, usually the first element is the highest quality
             url = max_format.get('play_addr').get('url_list')[0]  # Again, we can retry using other items in the list
             extension = max_format.get('format')
-            media_asset = download_media_asset_from_url(db=db, url=url, media_type=MediaType.video, download_dir=self.DOWNLOAD_DIR, extension_fallback=extension, filename=filename_prefix)
+            media_asset = download_media_asset_from_url(db=db, url=url, media_type=MediaType.video, download_dir=self.DOWNLOAD_DIR, extension_fallback=extension, filename=filename_prefix, use_cookies=True)
             post_media = link_post_media_asset(db=db, post=post, media_asset=media_asset)
             post_medias.append(post_media)
 
