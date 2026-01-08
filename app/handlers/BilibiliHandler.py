@@ -27,6 +27,10 @@ class BilibiliHandler(BaseHandler):
     )
     CREATOR_URL_PATTERN = r'(?:https?:)?//space\.bilibili\.com/(\d+)'
 
+    def __init__(self):
+        super().__init__()
+        self.client.headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+
     def extract_media_urls(self) -> list[str]:
         raise NotImplementedError
     

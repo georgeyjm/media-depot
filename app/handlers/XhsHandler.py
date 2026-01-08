@@ -29,8 +29,15 @@ class XhsHandler(BaseHandler):
     # CREATOR_URL_PATTERN = r'(?:https?:)?//space\.bilibili\.com/(\d+)'
     API_ROOT = f'http://localhost:{settings.XHS_DOWNLOADER_PORT}'
 
-    def extract_media_urls(self) -> list[str]:
-        raise NotImplementedError
+    def extract_media_urls(self, post_type: PostType) -> list[str]:
+        if post_type == PostType.video:
+            match = re.search(r'"consumer":\s*{.*?"originVideoKey":\s*"(.+?)"\s*}', self._html)
+            if match:
+                url = 'https://sns-video-bd.xhscdn.com/' + match.group(1).encode('utf-8').decode('unicode-escape')
+                return [url]
+            print(f'Origin video URL not found in HTML: {self._html}')
+        else:
+            return []
     
     def get_post_type(self) -> PostType:
         # TODO: Maybe remove
@@ -86,7 +93,15 @@ class XhsHandler(BaseHandler):
             # Convert unicode literals to actual characters
             profile_pic_url = profile_pic_url.group(1).encode('utf-8').decode('unicode-escape')
         if post_type == PostType.video:
-            thumbnail_url = None  # TODO: Get video thumbnail URL
+            thumbnail_file_id = re.search(r'"imageList":.*?"fileId":\s*"(.+?)"', self._html) or \
+                re.search(r'"video":.*?"image":.*?"firstFrameFileid":\s*"(.+?)"', self._html)
+            if thumbnail_file_id is not None:
+                thumbnail_url = 'https://ci.xiaohongshu.com/' + thumbnail_file_id.group(1).encode('utf-8').decode('unicode-escape')
+            elif thumbnail_url := re.search(r'"imageList":.*?(?:(?:"infoList":\s*\[.+?\].*?"url":\s*"(.+?)")|(?:"url":\s*"(.+?)".*?"infoList":\s*\[.+?\]))', self._html):
+                thumbnail_url = thumbnail_url.group(1) or thumbnail_url.group(2)
+                thumbnail_url = thumbnail_url.encode('utf-8').decode('unicode-escape')
+            else:
+                thumbnail_url = None
         else:
             thumbnail_url = re.search(r'"imageList":\s*?\[{.*?"urlDefault":\s*"(.+?)"', self._html)
             if thumbnail_url is not None:
@@ -94,7 +109,10 @@ class XhsHandler(BaseHandler):
         
         # Store media links for download
         if post_type == PostType.video:
-            self._video_data = api_data.get('下载地址')
+            video_url = self.extract_media_urls(post_type)
+            if not video_url:
+                raise ValueError('Origin video URL not found')
+            self._video_url = video_url[0]
         elif post_type == PostType.carousel:
             self._images_data = api_data.get('下载地址'), api_data.get('动图地址')
         else:
@@ -132,8 +150,16 @@ class XhsHandler(BaseHandler):
         filename_prefix = f'[{post.platform_post_id}] {post.title[:max_caption_length].strip()}'
 
         if post.post_type == PostType.video:
-            raise NotImplementedError('Video extraction is still being fixed and will not be supported for now.')
-        
+            media_asset = download_media_asset_from_url(
+                db=db,
+                url=self._video_url,
+                media_type=MediaType.video,
+                download_dir=self.DOWNLOAD_DIR,
+                filename=filename_prefix
+            )
+            post_media = link_post_media_asset(db=db, post=post, media_asset=media_asset)
+            post_medias.append(post_media)
+
         elif post.post_type == PostType.carousel:
             images, videos = self._images_data
             assert len(images) == len(videos), 'Image list and video list must have the same length.'
@@ -141,9 +167,16 @@ class XhsHandler(BaseHandler):
                 filename = f'{filename_prefix}_{i}'
                 media_type = MediaType.image
                 if video_url:
-                    # Live photo
+                    # Live photo's video part
                     media_type = MediaType.live_photo
-                    media_asset = download_media_asset_from_url(db=db, url=video_url, media_type=MediaType.live_video, download_dir=self.DOWNLOAD_DIR, filename=filename)
+                    media_asset = download_media_asset_from_url(
+                        db=db,
+                        url=video_url,
+                        media_type=MediaType.live_video,
+                        download_dir=self.DOWNLOAD_DIR,
+                        filename=filename,
+                        chunk_size=1024 * 1024 * 8
+                    )
                     post_media = link_post_media_asset(db=db, post=post, media_asset=media_asset, position=i)
                     post_medias.append(post_media)
                 
