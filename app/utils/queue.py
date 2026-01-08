@@ -14,7 +14,7 @@ def get_redis_connection() -> Redis:
 def get_queue(name: str = 'downloads') -> Queue:
     '''Get an RQ queue instance using settings.'''
     redis_conn = get_redis_connection()
-    return Queue(name, connection=redis_conn)
+    return Queue(name, connection=redis_conn, default_timeout=20*60)
 
 
 def enqueue_job(job: Job) -> None:
@@ -22,4 +22,4 @@ def enqueue_job(job: Job) -> None:
     queue = get_queue()
     base_interval = 15  # seconds
     intervals = [base_interval * 2**i for i in range(settings.JOB_RETRIES + 1)]
-    queue.enqueue(process_download_job, job.id, retry=Retry(max=settings.JOB_RETRIES, interval=intervals))
+    queue.enqueue(process_download_job, args=(job.id,), retry=Retry(max=settings.JOB_RETRIES, interval=intervals))

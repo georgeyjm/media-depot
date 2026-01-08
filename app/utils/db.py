@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -238,8 +238,8 @@ def download_media_asset_from_url(
     media_type: MediaType,
     download_dir: Optional[Path] = None,
     filename: Optional[str] = None,
-    extension_fallback: Optional[str] = None,
     commit: bool = True,
+    **kwargs: Any,
     ) -> MediaAsset:
     '''
     Download and create a MediaAsset record from a URL.
@@ -248,7 +248,7 @@ def download_media_asset_from_url(
     try:
         if not download_dir:
             download_dir = settings.MEDIA_ROOT_DIR / media_type.value
-        filepath = download_file(url=url, download_dir=download_dir, filename=filename, extension_fallback=extension_fallback)
+        filepath = download_file(url=url, download_dir=download_dir, filename=filename, **kwargs)
     except Exception as e:
         raise
     

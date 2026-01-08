@@ -155,6 +155,7 @@ def download_file(
     filename: Optional[str] = None,
     extension_fallback: Optional[str] = None,
     use_cookies: bool = False,
+    chunk_size: int = 1024 * 1024,
     timeout: float = 30.0,
     headers: Optional[dict[str, str]] = None,
     overwrite: bool = False,
@@ -200,7 +201,33 @@ def download_file(
             # Load cookies from file
             cookie_jar = MozillaCookieJar()
             cookie_jar.load(cookie_file, ignore_discard=True, ignore_expires=True)
-            cookies = dict(cookie_jar)
+            
+            # Filter cookies by domain to only include relevant cookies
+            parsed_url = urlparse(url)
+            request_domain = parsed_url.netloc.lower()
+            # Remove port if present
+            if ':' in request_domain:
+                request_domain = request_domain.split(':')[0]
+            
+            # Filter cookies that match the request domain
+            filtered_cookies = {}
+            for cookie in cookie_jar:
+                cookie_domain = cookie.domain.lower()
+                
+                # Check if cookie matches the request domain
+                # Domain cookies (starting with '.') match the domain and all subdomains
+                if cookie_domain.startswith('.'):
+                    # Remove leading dot for comparison
+                    base_domain = cookie_domain[1:]
+                    # Match exact domain or subdomains
+                    if request_domain == base_domain or request_domain.endswith('.' + base_domain):
+                        filtered_cookies[cookie.name] = cookie.value
+                else:
+                    # Non-domain cookies only match exact domain
+                    if request_domain == cookie_domain:
+                        filtered_cookies[cookie.name] = cookie.value
+            
+            cookies = filtered_cookies if filtered_cookies else None
     
     # For large files, we need a much longer read timeout
     # Default timeout is 30s, but for large files we should use at least 600s (10 minutes)
@@ -225,6 +252,8 @@ def download_file(
     
     last_exception = None
     for attempt in range(max_retries):
+        file_path = None
+        file_existed_before = False
         try:
             with httpx.Client(cookies=cookies, timeout=httpx_timeout, follow_redirects=True) as client:
                 with client.stream('GET', url, headers=request_headers) as response:
@@ -313,17 +342,18 @@ def download_file(
                     
                     # Ensure we don't overwrite existing files
                     file_path = download_dir / final_filename
-                    if not overwrite and file_path.exists():
+                    file_existed_before = file_path.exists()
+                    if not overwrite and file_existed_before:
                         # Find a unique filename by appending a short UUID
                         stem = file_path.stem
                         suffix = file_path.suffix
                         while file_path.exists():
                             unique_id = uuid.uuid4().hex[:8]
                             file_path = download_dir / f'{stem}_{unique_id}{suffix}'
+                            file_existed_before = False  # New file path, didn't exist before
                     
                     # Stream the file content to disk with chunk size control
                     # Use a larger chunk size (1MB) for better performance with large files
-                    chunk_size = 1024 * 1024  # 1MB chunks
                     with file_path.open('wb') as f:
                         for chunk in response.iter_bytes(chunk_size=chunk_size):
                             f.write(chunk)
@@ -332,6 +362,14 @@ def download_file(
         
         except (httpx.RemoteProtocolError, httpx.ReadTimeout, httpx.ConnectTimeout) as e:
             last_exception = e
+            # Clean up partial file if it was created during this attempt
+            if file_path and file_path.exists() and not file_existed_before:
+                try:
+                    file_path.unlink()
+                except Exception:
+                    # Ignore errors during cleanup (file might be locked, etc.)
+                    pass
+            
             if attempt < max_retries - 1:
                 # Exponential backoff: wait before retrying
                 wait_time = retry_delay * (2 ** attempt)
@@ -341,6 +379,14 @@ def download_file(
                 # Last attempt failed, re-raise the exception
                 raise
         except httpx.HTTPStatusError as e:
+            # Clean up partial file if it was created during this attempt
+            if file_path and file_path.exists() and not file_existed_before:
+                try:
+                    file_path.unlink()
+                except Exception:
+                    # Ignore errors during cleanup (file might be locked, etc.)
+                    pass
+            
             # Don't retry on HTTP status errors (4xx, 5xx) unless it's a 5xx server error
             if e.response.status_code >= 500 and attempt < max_retries - 1:
                 last_exception = e
@@ -349,6 +395,16 @@ def download_file(
                 continue
             else:
                 raise
+        except Exception as e:
+            # Clean up partial file if it was created during this attempt
+            if file_path and file_path.exists() and not file_existed_before:
+                try:
+                    file_path.unlink()
+                except Exception:
+                    # Ignore errors during cleanup (file might be locked, etc.)
+                    pass
+            # Re-raise the exception
+            raise
     
     # If we get here, all retries failed
     if last_exception:
