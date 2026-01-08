@@ -122,7 +122,57 @@ def _get_cookie_file() -> Optional[Path]:
     return None
 
 
-def download_yt_dlp(url: str, download_dir: Path=settings.MEDIA_ROOT_DIR, extra_options: dict[str, Any]={}) -> Path:
+def _get_cookies(url: str) -> dict[str, str]:
+    '''
+    Get cookies for a given URL.
+    
+    Args:
+        url: The URL to get cookies for.
+    
+    Returns:
+        A dictionary of cookies.
+    '''
+    # Prepare cookies if needed
+    cookie_file = _get_cookie_file()
+    if cookie_file and cookie_file.exists():
+        # Load cookies from file
+        cookie_jar = MozillaCookieJar()
+        cookie_jar.load(cookie_file, ignore_discard=True, ignore_expires=True)
+        
+        # Filter cookies by domain to only include relevant cookies
+        parsed_url = urlparse(url)
+        request_domain = parsed_url.netloc.lower()
+        # Remove port if present
+        if ':' in request_domain:
+            request_domain = request_domain.split(':')[0]
+        
+        # Filter cookies that match the request domain
+        filtered_cookies = {}
+        for cookie in cookie_jar:
+            cookie_domain = cookie.domain.lower()
+            
+            # Check if cookie matches the request domain
+            # Domain cookies (starting with '.') match the domain and all subdomains
+            if cookie_domain.startswith('.'):
+                # Remove leading dot for comparison
+                base_domain = cookie_domain[1:]
+                # Match exact domain or subdomains
+                if request_domain == base_domain or request_domain.endswith('.' + base_domain):
+                    filtered_cookies[cookie.name] = cookie.value
+            else:
+                # Non-domain cookies only match exact domain
+                if request_domain == cookie_domain:
+                    filtered_cookies[cookie.name] = cookie.value
+        
+        cookies = filtered_cookies if filtered_cookies else None
+        return cookies
+
+
+def download_yt_dlp(
+    url: str,
+    download_dir: Path=settings.MEDIA_ROOT_DIR,
+    extra_options: dict[str, Any]={}
+    ) -> Path:
     '''
     Download a video using yt-dlp.
 
@@ -149,6 +199,94 @@ def download_yt_dlp(url: str, download_dir: Path=settings.MEDIA_ROOT_DIR, extra_
     return Path(file_path)
 
 
+def _determine_file_extension(response: httpx.Response, fallback: Optional[str] = None) -> str:
+    '''
+    Determine the file extension from the an HTTP response.
+    
+    Args:
+        response: The HTTP response.
+        fallback: The fallback extension to use if the extension cannot be determined otherwise.
+
+    Returns:
+        The file extension.
+    '''
+    # Try to infer from Content-Type header
+    content_type = response.headers.get('Content-Type', '')
+    extension = {
+        'image/jpeg': '.jpg',
+        'image/jpg': '.jpg',
+        'image/png': '.png',
+        'image/heic': '.heic',
+        'image/heif': '.heif',
+        'image/heic-sequence': '.heic',
+        'image/heif-sequence': '.heif',
+        'image/gif': '.gif',
+        'image/webp': '.webp',
+        'video/mp4': '.mp4',
+        'video/webm': '.webm',
+        'video/hevc': '.hevc',
+        'video/quicktime': '.mov',
+        'video/x-msvideo': '.avi',
+        'video/x-matroska': '.mkv',
+        'video/x-m4v': '.m4v',
+        'video/3gpp': '.3gp',
+        'video/x-flv': '.flv',
+        'video/x-ms-wmv': '.wmv',
+    }.get(content_type, None)
+    if extension:
+        return extension
+    
+    # Try to extract from URL
+    path_ext = Path(urlparse(str(response.url)).path).suffix
+    if path_ext:
+        extension = path_ext
+    elif fallback:
+        if fallback.startswith('.'):
+            extension = fallback
+        else:
+            extension = '.' + fallback
+    else:
+        # This shouldn't happen
+        extension = ''
+    
+    # Fix unwanted extensions
+    extension = extension.replace('.jpeg', '.jpg')
+    
+    return extension
+
+
+def _determine_filename(response: httpx.Response) -> str:
+    '''
+    Determine the filename from an HTTP response.
+    
+    Args:
+        response: The HTTP response.
+    '''
+    # Try to extract filename from Content-Disposition header
+    content_disposition = response.headers.get('Content-Disposition', '')
+    filename = None
+    if content_disposition:
+        # Format: attachment; filename="file.jpg" or attachment; filename*=UTF-8''file.jpg
+        filename_match = re.search(
+            r'filename[*]?=(?:UTF-8\'\')?["\']?([^"\';]+)["\']?',
+            content_disposition,
+            re.IGNORECASE
+        )
+        if filename_match:
+            filename = unquote(filename_match.group(1))
+    
+    # Extract filename from URL
+    if not filename:
+        parsed_url = urlparse(str(response.url))
+        filename = Path(unquote(parsed_url.path)).name
+    
+    # If still no filename, generate one from hashing the URL
+    if not filename or filename == '/':
+        filename = hashlib.md5(str(response.url).encode()).hexdigest()[:8]
+    
+    return filename
+
+
 def download_file(
     url: str,
     download_dir: Path = settings.MEDIA_ROOT_DIR,
@@ -156,271 +294,222 @@ def download_file(
     extension_fallback: Optional[str] = None,
     use_cookies: bool = False,
     chunk_size: int = 1024 * 1024,
-    timeout: float = 30.0,
+    timeout: float = 60.0,
     headers: Optional[dict[str, str]] = None,
     overwrite: bool = False,
-    max_retries: int = 3,
-    retry_delay: float = 2.0,
+    retries: int = 8,
 ) -> Path:
     '''
-    Download a file from any URL to a local directory.
+    Download a file from an arbitrary URL with resume support.
     
     Args:
         url: The URL of the file to download.
         download_dir: The directory to download the file to. Defaults to MEDIA_ROOT_DIR.
-        filename: Optional filename for the downloaded file. If not provided, will be
+        filename: Optional filename for the downloaded file (without extension). If not provided, will be
                   extracted from URL or Content-Disposition header.
         extension_fallback: Optional extension to use if the extension cannot be determined from the Content-Type header.
         use_cookies: Whether to use cookies from the cookie file. Defaults to False.
-        timeout: Request timeout in seconds. Defaults to 30.0. For large files, consider using a larger value (e.g., 600.0).
+        chunk_size: Size of chunks to read in bytes. Defaults to 1MB.
+        timeout: Request timeout in seconds. Defaults to 60.0. For large files, consider using a larger value (e.g., 600.0).
         headers: Optional custom headers to include in the request.
         overwrite: Whether to overwrite existing files. Defaults to False.
-        max_retries: Maximum number of retry attempts for failed downloads. Defaults to 3.
-        retry_delay: Initial delay between retries in seconds. Defaults to 2.0. Will be doubled on each retry.
+        retries: Number of retry attempts if resume is supported. Defaults to 8. If resume is not supported, only one attempt is made.
     
     Returns:
         Path: The path to the downloaded file.
     
     Raises:
-        httpx.HTTPError: If the HTTP request fails after all retries.
-        httpx.TimeoutException: If the request times out after all retries.
+        httpx.HTTPError: If the HTTP request fails.
+        httpx.TimeoutException: If the request times out.
         ValueError: If filename cannot be determined.
     '''
     # Prepare request headers and cookies
     request_headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1 Edg/143.0.0.0',
+        'Accept': '*/*',
+        'Accept-Encoding': 'identity',
+        'Connection': 'keep-alive',
     }
     if headers:
         request_headers.update(headers)
-    
-    # Prepare cookies if needed
-    cookies = None
     if use_cookies:
-        cookie_file = _get_cookie_file()
-        if cookie_file and cookie_file.exists():
-            # Load cookies from file
-            cookie_jar = MozillaCookieJar()
-            cookie_jar.load(cookie_file, ignore_discard=True, ignore_expires=True)
-            
-            # Filter cookies by domain to only include relevant cookies
-            parsed_url = urlparse(url)
-            request_domain = parsed_url.netloc.lower()
-            # Remove port if present
-            if ':' in request_domain:
-                request_domain = request_domain.split(':')[0]
-            
-            # Filter cookies that match the request domain
-            filtered_cookies = {}
-            for cookie in cookie_jar:
-                cookie_domain = cookie.domain.lower()
-                
-                # Check if cookie matches the request domain
-                # Domain cookies (starting with '.') match the domain and all subdomains
-                if cookie_domain.startswith('.'):
-                    # Remove leading dot for comparison
-                    base_domain = cookie_domain[1:]
-                    # Match exact domain or subdomains
-                    if request_domain == base_domain or request_domain.endswith('.' + base_domain):
-                        filtered_cookies[cookie.name] = cookie.value
-                else:
-                    # Non-domain cookies only match exact domain
-                    if request_domain == cookie_domain:
-                        filtered_cookies[cookie.name] = cookie.value
-            
-            cookies = filtered_cookies if filtered_cookies else None
-    
-    # For large files, we need a much longer read timeout
-    # Default timeout is 30s, but for large files we should use at least 600s (10 minutes)
-    # If timeout is the default 30s, use a more generous timeout for large file downloads
-    if timeout <= 30.0:
-        # Use a longer timeout for large files - 10 minutes should be enough for most cases
-        # Connect timeout: 10s, Read timeout: 600s, Write timeout: 30s, Pool timeout: 10s
-        httpx_timeout = httpx.Timeout(
-            connect=10.0,
-            read=600.0,  # 10 minutes for reading large files
-            write=30.0,
-            pool=10.0,
-        )
+        cookies = _get_cookies(url)
     else:
-        # Use the provided timeout, but still separate connect/read/write
-        httpx_timeout = httpx.Timeout(
-            connect=10.0,
-            read=timeout,
-            write=30.0,
-            pool=10.0,
-        )
+        cookies = None
     
-    last_exception = None
-    for attempt in range(max_retries):
-        file_path = None
-        file_existed_before = False
+    # Default timeout is 60s, but for large files we should use at least 600s (10 minutes)
+    httpx_timeout = httpx.Timeout(
+        connect=10.0,
+        read=timeout,
+        write=30.0,
+        pool=10.0,
+    )
+    
+    extension = None
+    file_path = None
+    file_exists = False
+    resume_supported = False
+    expected_size = None
+    
+    with httpx.Client(cookies=cookies, timeout=httpx_timeout, follow_redirects=True) as client:
         try:
-            with httpx.Client(cookies=cookies, timeout=httpx_timeout, follow_redirects=True) as client:
+            # Make a HEAD request to check for resume support
+            test_response = client.head(url, headers=request_headers, follow_redirects=True)
+            test_response.raise_for_status()
+            if test_response.headers.get('Accept-Ranges') == 'bytes':
+                # Server supports Range requests
+                resume_supported = True
+                if not filename:
+                    filename = _determine_filename(test_response)
+                extension = _determine_file_extension(test_response, extension_fallback)
+                expected_size = test_response.headers.get('Content-Length')  # TODO: Check this when download is finished
+        except (httpx.HTTPStatusError, httpx.RequestError):
+            # HEAD not supported or failed, we'll determine from GET response with Range header
+            try:
+                test_response = client.get(url, headers={'Range': 'bytes=0-0', **request_headers}, follow_redirects=True)
+                if test_response.status_code == 206:  # Partial Content
+                    resume_supported = True
+                    if not filename and test_response.headers.get('Content-Disposition'):
+                        filename = _determine_filename(test_response)
+                    if test_response.headers.get('Content-Type'):
+                        extension = _determine_file_extension(test_response, extension_fallback)
+                    if content_range := test_response.headers.get('Content-Range'):
+                        expected_size = int(content_range.split('/')[-1])
+            except Exception:
+                pass
+        
+        # Determine filename and extension by making a GET request
+        if not filename or not extension or not expected_size:
+            with client.stream('GET', url, headers=request_headers) as response:
+                response.raise_for_status()
+                if filename is None:
+                    filename = _determine_filename(response)
+                if extension is None:
+                    extension = _determine_file_extension(response, extension_fallback)
+                if expected_size is None:
+                    expected_size = response.headers.get('Content-Length')
+        
+        # Determine final file name and path
+        final_filename = re.sub(r'[<>:"/\\|?*]', '_', filename + extension)
+        if not final_filename:
+            raise ValueError(f'Could not determine filename for URL: {url}')
+        file_path = download_dir / final_filename
+        file_exists = file_path.exists()
+        
+        # Handle existing files
+        if file_exists:
+            # Note this could be from a previous worker attempt to download the same file
+            # Do we want to delete it?
+            if overwrite:
+                # Overwrite mode: delete existing file
+                file_path.unlink()
+                file_exists = False
+            else:
+                # Find a unique filename by appending a short UUID
+                stem = file_path.stem
+                suffix = file_path.suffix
+                while file_path.exists():
+                    unique_id = uuid.uuid4().hex[:8]
+                    file_path = download_dir / f'{stem}_{unique_id}{suffix}'
+                file_exists = False
+        
+        max_attempts = retries if resume_supported else 1
+        
+        last_exception = None
+        for attempt in range(max_attempts):
+            try:
+                # Check if we should resume
+                resume_from = 0
+                if resume_supported and file_path.exists() and not overwrite:
+                    file_size = file_path.stat().st_size
+                    if file_size > 0:
+                        resume_from = file_size
+                        request_headers['Range'] = f'bytes={resume_from}-'
+                
                 with client.stream('GET', url, headers=request_headers) as response:
                     response.raise_for_status()
-
-                    # Determine file extension
-                    content_type = response.headers.get('Content-Type', '')
-                    if 'image/jpeg' in content_type or 'image/jpg' in content_type:
-                        extension = '.jpg'
-                    elif 'image/png' in content_type:
-                        extension = '.png'
-                    elif 'image/gif' in content_type:
-                        extension = '.gif'
-                    elif 'image/webp' in content_type:
-                        extension = '.webp'
-                    elif 'video/mp4' in content_type:
-                        extension = '.mp4'
-                    elif 'video/webm' in content_type:
-                        extension = '.webm'
-                    elif 'video/quicktime' in content_type:
-                        extension = '.mov'
-                    elif 'video/x-msvideo' in content_type:
-                        extension = '.avi'
-                    elif 'video/x-matroska' in content_type:
-                        extension = '.mkv'
-                    elif 'video/3gpp' in content_type:
-                        extension = '.3gp'
-                    elif 'video/x-flv' in content_type:
-                        extension = '.flv'
-                    elif 'video/x-ms-wmv' in content_type:
-                        extension = '.wmv'
-                    else:
-                        # Try to extract from URL
-                        parsed_url = urlparse(url)
-                        path_ext = Path(parsed_url.path).suffix
-                        if path_ext:
-                            extension = path_ext
-                        elif extension_fallback:
-                            if extension_fallback.startswith('.'):
-                                extension = extension_fallback
-                            else:
-                                extension = '.' + extension_fallback
+                    
+                    file_mode = 'wb'  # Write mode
+                    if resume_from > 0:
+                        # Resuming from previous download
+                        if response.status_code == 206:  # Partial Content
+                            # Server supports range requests, resume successful
+                            file_mode = 'ab'  # Append mode
+                        elif response.status_code == 200:
+                            # Server doesn't support range requests, restart download
+                            file_mode = 'wb'  # Write mode
+                            # Make a new request without the Range header
+                            response.close()
+                            request_headers.pop('Range', None)
+                            with client.stream('GET', url, headers=request_headers) as response:
+                                response.raise_for_status()
+                                for chunk in response.iter_bytes(chunk_size=chunk_size):
+                                    f.write(chunk)
+                            return file_path
                         else:
-                            # This shouldn't happen
-                            extension = ''
-                    if extension == '.jpeg':
-                        extension = '.jpg'
-
-                    # Determine filename
-                    if filename:
-                        final_filename = filename + extension
-                    else:
-                        # Try to get filename from Content-Disposition header
-                        content_disposition = response.headers.get('Content-Disposition', '')
-                        if content_disposition:
-                            # Extract filename from Content-Disposition header
-                            # Format: attachment; filename="file.jpg" or attachment; filename*=UTF-8''file.jpg
-                            filename_match = re.search(
-                                r'filename[*]?=(?:UTF-8\'\')?["\']?([^"\';]+)["\']?',
-                                content_disposition,
-                                re.IGNORECASE
-                            )
-                            if filename_match:
-                                final_filename = unquote(filename_match.group(1))
-                            else:
-                                # Fallback: extract from URL
-                                parsed_url = urlparse(url)
-                                final_filename = Path(unquote(parsed_url.path)).name
-                        else:
-                            # Extract filename from URL
-                            parsed_url = urlparse(url)
-                            final_filename = Path(unquote(parsed_url.path)).name
-                        
-                        # If still no filename, generate one from URL
-                        if not final_filename or final_filename == '/':
-                            # Generate filename from URL hash or use a default
-                            url_hash = hashlib.md5(url.encode()).hexdigest()[:8]
-                            final_filename = url_hash
-                        
-                        final_filename += extension
+                            response.raise_for_status()
                     
-                    # Ensure filename is safe
-                    final_filename = re.sub(r'[<>:"/\\|?*]', '_', final_filename)
-                    if not final_filename:
-                        raise ValueError(f'Could not determine filename for URL: {url}')
-                    
-                    # Ensure we don't overwrite existing files
-                    file_path = download_dir / final_filename
-                    file_existed_before = file_path.exists()
-                    if not overwrite and file_existed_before:
-                        # Find a unique filename by appending a short UUID
-                        stem = file_path.stem
-                        suffix = file_path.suffix
-                        while file_path.exists():
-                            unique_id = uuid.uuid4().hex[:8]
-                            file_path = download_dir / f'{stem}_{unique_id}{suffix}'
-                            file_existed_before = False  # New file path, didn't exist before
-                    
-                    # Stream the file content to disk with chunk size control
-                    # Use a larger chunk size (1MB) for better performance with large files
-                    with file_path.open('wb') as f:
+                    with file_path.open(file_mode) as f:
                         for chunk in response.iter_bytes(chunk_size=chunk_size):
                             f.write(chunk)
                     
                     return file_path
-        
-        except (httpx.RemoteProtocolError, httpx.ReadTimeout, httpx.ConnectTimeout) as e:
-            last_exception = e
-            # Clean up partial file if it was created during this attempt
-            if file_path and file_path.exists() and not file_existed_before:
-                try:
-                    file_path.unlink()
-                except Exception:
-                    # Ignore errors during cleanup (file might be locked, etc.)
-                    pass
             
-            if attempt < max_retries - 1:
-                # Exponential backoff: wait before retrying
-                wait_time = retry_delay * (2 ** attempt)
-                time.sleep(wait_time)
-                continue
-            else:
-                # Last attempt failed, re-raise the exception
-                raise
-        except httpx.HTTPStatusError as e:
-            # Clean up partial file if it was created during this attempt
-            if file_path and file_path.exists() and not file_existed_before:
-                try:
-                    file_path.unlink()
-                except Exception:
-                    # Ignore errors during cleanup (file might be locked, etc.)
-                    pass
-            
-            # Don't retry on HTTP status errors (4xx, 5xx) unless it's a 5xx server error
-            if e.response.status_code >= 500 and attempt < max_retries - 1:
+            except (httpx.RemoteProtocolError, httpx.ReadTimeout, httpx.ConnectTimeout, httpx.HTTPStatusError) as e:
                 last_exception = e
-                wait_time = retry_delay * (2 ** attempt)
-                time.sleep(wait_time)
+                # # If this is the last attempt, delete the file and re-raise
+                # if attempt == max_attempts - 1:
+                #     if file_path.exists() and not file_exists:
+                #         try:
+                #             file_path.unlink()
+                #         except Exception:
+                #             # Ignore errors during cleanup
+                #             pass
+                #     raise
+                # # Otherwise, continue to next attempt (only if resume is supported)
+                # if not resume_supported:
+                #     # If resume is not supported, we only try once, so re-raise
+                #     if file_path.exists() and not file_exists:
+                #         try:
+                #             file_path.unlink()
+                #         except Exception:
+                #             pass
+                #     raise
+
+                # Remove Range header for next attempt (will be re-added if file still exists)
+                request_headers.pop('Range', None)
+                time.sleep(2 * 2 ** attempt)
                 continue
-            else:
-                raise
-        except Exception as e:
-            # Clean up partial file if it was created during this attempt
-            if file_path and file_path.exists() and not file_existed_before:
-                try:
-                    file_path.unlink()
-                except Exception:
-                    # Ignore errors during cleanup (file might be locked, etc.)
-                    pass
-            # Re-raise the exception
-            raise
-    
-    # If we get here, all retries failed
-    if last_exception:
-        raise last_exception
-    raise httpx.HTTPError(f'Failed to download {url} after {max_retries} attempts')
+            except Exception as e:
+                last_exception = e
+                request_headers.pop('Range', None)
+                time.sleep(2 * 2 ** attempt)
+                continue
+        
+        # If we get here, all retries failed
+        if file_path and file_path.exists() and not file_exists:
+            try:
+                file_path.unlink()
+            except Exception:
+                pass
+        if last_exception:
+            raise last_exception
+        raise httpx.HTTPError(f'Failed to download {url} after {max_attempts} attempts')
 
 
-def hash_file(file_path: Path, buffer_size: Optional[int]=None, hash_type: Literal['sha256', 'md5', 'sha1']='sha256') -> str:
+def hash_file(
+    file_path: Path,
+    hash_type: Literal['sha256', 'md5', 'sha1'] = 'sha256',
+    buffer_size: Optional[int] = None,
+) -> str:
     '''
     Hash a file using specified hash algorithm.
     Note that when dealing with relatively small files, no buffers are needed.
     
     Args:
         file_path: The path to the file to hash.
-        buffer_size: The buffer size to use for reading the file. If None, the file will be read in one go.
         hash_type: The hash algorithm to use. Defaults to SHA-256.
+        buffer_size: The buffer size to use for reading the file. If None, the file will be read in one go.
     
     Returns:
         str: The SHA-256 hash of the file.

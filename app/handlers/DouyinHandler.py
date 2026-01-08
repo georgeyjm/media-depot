@@ -6,7 +6,7 @@ from app.db import Session
 from app.models import Post, PostMedia
 from app.models.enums import PostType, MediaType
 from app.schemas.post import PostInfo
-from app.utils.db import download_media_asset_from_url, link_post_media_asset
+from app.utils.db import download_media_asset_from_url, download_media_asset_from_urls, link_post_media_asset
 from app.utils.helpers import remove_query_params
 
 
@@ -170,8 +170,8 @@ class DouyinHandler(BaseHandler):
                         ('play_addr', 'play_addr_h264', 'play_addr_265', 'play_addr_lowbr'),
                         key=lambda k: live_video_data.get(k, {}).get('data_size', 0),
                     )
-                    live_video_url = live_video_data.get(source_key).get('url_list')[0]  # Maybe we should consider having the entire list so we can retry different URLs
-                    media_asset = download_media_asset_from_url(db=db, url=live_video_url, media_type=MediaType.live_video, download_dir=self.DOWNLOAD_DIR, filename=filename, use_cookies=True)
+                    live_video_urls = live_video_data.get(source_key).get('url_list')[:2]
+                    media_asset = download_media_asset_from_urls(db=db, urls=live_video_urls, media_type=MediaType.live_video, download_dir=self.DOWNLOAD_DIR, filename=filename, use_cookies=True)
                     post_media = link_post_media_asset(db=db, post=post, media_asset=media_asset, position=i)
                     post_medias.append(post_media)
 
@@ -185,9 +185,9 @@ class DouyinHandler(BaseHandler):
         elif post.post_type == PostType.video:
             formats = self._video_data.get('bit_rate')
             max_format = max(formats, key=lambda f: f.get('bit_rate'))  # Can also use formats.get('play_addr').get('data_size'). Also, usually the first element is the highest quality
-            url = max_format.get('play_addr').get('url_list')[0]  # Again, we can retry using other items in the list
+            urls = max_format.get('play_addr').get('url_list')[:2]
             extension = max_format.get('format')
-            media_asset = download_media_asset_from_url(db=db, url=url, media_type=MediaType.video, download_dir=self.DOWNLOAD_DIR, extension_fallback=extension, filename=filename_prefix, use_cookies=True)
+            media_asset = download_media_asset_from_urls(db=db, urls=urls, media_type=MediaType.video, download_dir=self.DOWNLOAD_DIR, extension_fallback=extension, filename=filename_prefix, use_cookies=True)
             post_media = link_post_media_asset(db=db, post=post, media_asset=media_asset)
             post_medias.append(post_media)
 

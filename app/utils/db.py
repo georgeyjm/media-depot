@@ -260,6 +260,29 @@ def download_media_asset_from_url(
     return get_or_create_media_asset(db=db, media_asset_info=media_asset_info, commit=commit)
 
 
+def download_media_asset_from_urls(
+    db: Session,
+    urls: list[str],
+    media_type: MediaType,
+    download_dir: Optional[Path] = None,
+    filename: Optional[str] = None,
+    commit: bool = True,
+    **kwargs: Any,
+) -> list[MediaAsset]:
+    '''
+    Download and create a single MediaAsset from a list of possible URLs.
+    '''
+    last_exception = None
+    for url in urls:
+        try:
+            return download_media_asset_from_url(db=db, url=url, media_type=media_type, download_dir=download_dir, filename=filename, commit=commit, **kwargs)
+        except Exception as e:
+            last_exception = e
+            continue
+    if last_exception:
+        raise last_exception
+
+
 def link_post_media_asset(db: Session, post: Post, media_asset: MediaAsset, position: int = 0, commit: bool = True) -> PostMedia:
     '''
     Link a single MediaAsset record to a Post record.
