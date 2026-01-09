@@ -52,6 +52,7 @@ media/
 downloads/
 profile_pics/
 .cache/
+/tests/
 
 # OS generated files
 .DS_Store

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Optional, Literal
 from http.cookiejar import MozillaCookieJar
 from urllib.parse import urlparse, unquote
+from mimetypes import guess_extension
 
 import httpx
 from yt_dlp import YoutubeDL
@@ -233,7 +234,7 @@ def _determine_file_extension(response: httpx.Response, fallback: Optional[str] 
         'video/3gpp': '.3gp',
         'video/x-flv': '.flv',
         'video/x-ms-wmv': '.wmv',
-    }.get(content_type, None)
+    }.get(content_type, guess_extension(content_type))
     if extension:
         return extension
     
@@ -248,6 +249,9 @@ def _determine_file_extension(response: httpx.Response, fallback: Optional[str] 
             extension = '.' + fallback
     else:
         # This shouldn't happen
+        print(f'Could not determine file extension for URL: {response.url}')
+        print(f'Content-Type: {content_type}')
+        print(f'Headers: {response.headers}')
         extension = ''
     
     # Fix unwanted extensions

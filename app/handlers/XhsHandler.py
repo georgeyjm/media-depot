@@ -53,6 +53,8 @@ class XhsHandler(BaseHandler):
             api_response.raise_for_status()
             api_data = api_response.json()
             if '成功' not in api_data.get('message') or not api_data.get('data'):
+                print(f'XHS API did not return valid data: {api_data}')
+                print(self._resolved_url)
                 return None
             api_data = api_data.get('data')
         except Exception:
@@ -104,6 +106,7 @@ class XhsHandler(BaseHandler):
         elif post_type == PostType.carousel:
             self._images_data = api_data.get('下载地址'), api_data.get('动图地址')
         else:
+            print('Unsupported post type:', post_type)
             return None
 
         return PostInfo(
