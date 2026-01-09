@@ -17,17 +17,23 @@ redis-server
 
 3. Start the API server
 
-```
-uv run fastapi dev
+```shell
+uv run fastapi run
 ```
 
-4. Spin up a worker.
+4. Spin up workers.
 
 ```shell
 uv run worker.py
 ```
-
 Note for macOS, set `OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES`.
+
+5. Run external media extraction servers
+
+```shell
+docker start -i douyin-downloader
+uv run main.py api
+```
 
 
 ### Production
