@@ -1,9 +1,5 @@
 import re
-from pathlib import Path
 from datetime import datetime
-from zoneinfo import ZoneInfo
-
-from bs4 import BeautifulSoup
 
 from app.config import settings
 from app.handlers import BaseHandler
@@ -12,7 +8,7 @@ from app.models import Post, PostMedia
 from app.models.enums import PostType, MediaType
 from app.schemas.post import PostInfo
 from app.utils.db import download_media_asset_from_url, link_post_media_asset
-from app.utils.helpers import remove_query_params
+from app.utils.helpers import remove_query_params, unescape_unicode
 
 
 class XhsHandler(BaseHandler):
@@ -33,7 +29,7 @@ class XhsHandler(BaseHandler):
         if post_type == PostType.video:
             match = re.search(r'"consumer":\s*{.*?"originVideoKey":\s*"(.+?)"\s*}', self._html)
             if match:
-                url = 'https://sns-video-bd.xhscdn.com/' + match.group(1).encode('utf-8').decode('unicode-escape')
+                url = 'https://sns-video-bd.xhscdn.com/' + unescape_unicode(match.group(1))
                 return [url]
             print(f'Origin video URL not found in HTML: {self._html}')
         else:
@@ -47,14 +43,6 @@ class XhsHandler(BaseHandler):
         '''Extract post metadata and information.'''
         
         # TODO: Check if post is non-existent
-        
-        # platform_post_type, platform_post_id = re.match(self.FULL_URL_PATTERNS[0], self._resolved_url).group(1, 2)
-        # url = remove_query_params(self._resolved_url)
-        # share_url = self._current_url
-        # post_type = {
-        #     'video': PostType.video,
-        #     'note': PostType.carousel,
-        # }.get(platform_post_type, PostType.unknown)
 
         # Use third-party API to extract post info and download links
         try:
@@ -87,25 +75,25 @@ class XhsHandler(BaseHandler):
         creator_url = api_data.get('作者链接')
         creator_username = None  # TODO: It's actually surprisingly hard to get this - need to bypass auth and request the user homepage
         creator_display_name = api_data.get('作者昵称')
-        profile_pic_url = re.search(r'"user":\s*?{.*?"avatar":\s*"(.+?)"', self._html)
-        
+
+        profile_pic_url = re.search(r'"user":\s*?{.*?"avatar":\s*"(.+?)"', self._html)        
         if profile_pic_url is not None:
             # Convert unicode literals to actual characters
-            profile_pic_url = profile_pic_url.group(1).encode('utf-8').decode('unicode-escape')
+            profile_pic_url = remove_query_params(unescape_unicode(profile_pic_url.group(1)))
         if post_type == PostType.video:
             thumbnail_file_id = re.search(r'"imageList":.*?"fileId":\s*"(.+?)"', self._html) or \
                 re.search(r'"video":.*?"image":.*?"firstFrameFileid":\s*"(.+?)"', self._html)
             if thumbnail_file_id is not None:
-                thumbnail_url = 'https://ci.xiaohongshu.com/' + thumbnail_file_id.group(1).encode('utf-8').decode('unicode-escape')
+                thumbnail_url = 'https://ci.xiaohongshu.com/' + unescape_unicode(thumbnail_file_id.group(1))
             elif thumbnail_url := re.search(r'"imageList":.*?(?:(?:"infoList":\s*\[.+?\].*?"url":\s*"(.+?)")|(?:"url":\s*"(.+?)".*?"infoList":\s*\[.+?\]))', self._html):
                 thumbnail_url = thumbnail_url.group(1) or thumbnail_url.group(2)
-                thumbnail_url = thumbnail_url.encode('utf-8').decode('unicode-escape')
+                thumbnail_url = unescape_unicode(thumbnail_url)
             else:
                 thumbnail_url = None
         else:
             thumbnail_url = re.search(r'"imageList":\s*?\[{.*?"urlDefault":\s*"(.+?)"', self._html)
             if thumbnail_url is not None:
-                thumbnail_url = thumbnail_url.group(1).encode('utf-8').decode('unicode-escape')
+                thumbnail_url = unescape_unicode(thumbnail_url.group(1))
         
         # Store media links for download
         if post_type == PostType.video:
@@ -181,6 +169,7 @@ class XhsHandler(BaseHandler):
                     post_medias.append(post_media)
                 
                 # Download the photo
+                # Can technically apply remove_query_params here
                 image_url = image_url.replace('/format/png', '/format/auto')
                 media_asset = download_media_asset_from_url(db=db, url=image_url, media_type=media_type, download_dir=self.DOWNLOAD_DIR, filename=filename)
                 post_media = link_post_media_asset(db=db, post=post, media_asset=media_asset, position=i)

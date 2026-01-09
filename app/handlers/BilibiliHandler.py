@@ -11,7 +11,7 @@ from app.models.enums import PostType, MediaType
 from app.schemas import PostInfo, MediaAssetCreate
 from app.utils.db import get_or_create_media_asset, link_post_media_asset
 from app.utils.download import download_yt_dlp
-from app.utils.helpers import remove_query_params
+from app.utils.helpers import remove_query_params, unescape_unicode
 
 
 class BilibiliHandler(BaseHandler):
@@ -92,7 +92,7 @@ class BilibiliHandler(BaseHandler):
         profile_pic_url = re.search(r'"upData":\s*{[^}]+?"face":\s*"(.+?)"', self._html)
         if profile_pic_url is not None:
             # Convert unicode literals to actual characters
-            profile_pic_url = profile_pic_url.group(1).encode('utf-8').decode('unicode-escape')
+            profile_pic_url = unescape_unicode(profile_pic_url.group(1))
         thumbnail_url = re.search(r'<meta[^>]+itemprop="thumbnailUrl"[^>]+content="(.+?)"[^>]*>', self._html) or \
             re.search(r'"thumbnailUrl":\s*\[\s*"([^"]+)".*?\],', self._html)
         if thumbnail_url is not None:

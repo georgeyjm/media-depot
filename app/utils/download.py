@@ -11,6 +11,7 @@ import httpx
 from yt_dlp import YoutubeDL
 
 from app.config import settings
+from app.utils.helpers import sanitize_filename
 
 
 # Module-level cache for cookie file path and last extraction time
@@ -341,8 +342,14 @@ def download_file(
     httpx_timeout = httpx.Timeout(
         connect=10.0,
         read=timeout,
-        write=30.0,
+        write=15.0,
         pool=10.0,
+    )
+    # Set limits for download stability
+    limits = httpx.Limits(
+        max_connections=10,
+        max_keepalive_connections=5,
+        keepalive_expiry=45.0,
     )
     
     extension = None
@@ -351,7 +358,7 @@ def download_file(
     resume_supported = False
     expected_size = None
     
-    with httpx.Client(cookies=cookies, timeout=httpx_timeout, follow_redirects=True) as client:
+    with httpx.Client(cookies=cookies, timeout=httpx_timeout, limits=limits, follow_redirects=True) as client:
         try:
             # Make a HEAD request to check for resume support
             test_response = client.head(url, headers=request_headers, follow_redirects=True)
@@ -390,7 +397,7 @@ def download_file(
                     expected_size = response.headers.get('Content-Length')
         
         # Determine final file name and path
-        final_filename = re.sub(r'[<>:"/\\|?*]', '_', filename + extension)
+        final_filename = sanitize_filename(filename + extension)
         if not final_filename:
             raise ValueError(f'Could not determine filename for URL: {url}')
         file_path = download_dir / final_filename
