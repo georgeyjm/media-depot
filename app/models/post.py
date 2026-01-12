@@ -6,7 +6,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models import Base, TimestampMixin
 from app.models.enums import PostType, JobStatus
-from app.utils.db import to_absolute_media_path
 
 
 class Post(Base, TimestampMixin):
@@ -53,6 +52,7 @@ class Post(Base, TimestampMixin):
         Returns:
             True if post has media_items and all files exist on disk, False otherwise.
         '''
+        from app.utils.db import to_absolute_media_path
         if not self.media_items:
             return False  # No media items means nothing exists
         return all(to_absolute_media_path(post_media.media_asset.file_path).exists() for post_media in self.media_items)

@@ -1,12 +1,16 @@
 from typing import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
+from app.config import settings
 from app.db import engine, SessionLocal
 from app.models import Base
+from app.routers import downloads_router, posts_router
 from app.handlers import initialize_platforms
-from app.routers import api_router
 
 
 @asynccontextmanager
@@ -31,6 +35,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     pass
 
 
+FRONTEND_DIR = Path(__file__).parent / 'static'
+FRONTEND_DIR.mkdir(parents=True, exist_ok=True)
+
 app = FastAPI(
     title='Media Depot',
     description='Central depot for your favorite media content',
@@ -38,17 +45,28 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.include_router(api_router, prefix='/api')
 
+### Page Routes
 
 @app.get('/')
 async def root():
-    '''Root endpoint.'''
-    return {'message': 'Media Depot API'}
+    '''Serve the frontend application.'''
+    return FileResponse(FRONTEND_DIR / 'index.html')
 
 
-@app.get('/health')
-async def health():
-    '''Health check endpoint.'''
-    from app.db import healthcheck_db
-    return {'status': 'healthy' if healthcheck_db() else 'unhealthy'}
+@app.get('/library')
+async def library():
+    '''Serve the frontend application (SPA routing).'''
+    return FileResponse(FRONTEND_DIR / 'index.html')
+
+
+### API routes
+
+app.include_router(downloads_router, prefix='/api')
+app.include_router(posts_router, prefix='/api')
+
+
+### Static file mounts (must be after explicit routes)
+
+app.mount('/media', StaticFiles(directory=settings.MEDIA_ROOT_DIR), name='media')
+app.mount('/static', StaticFiles(directory=FRONTEND_DIR), name='static')
