@@ -500,8 +500,9 @@ input, textarea, select {
 }
 
 .tasks-list {
-    padding: 12px;
+    padding: 16px 16px 16px 12px;
     overflow-y: auto;
+    overflow-x: visible;
     height: calc(100vh - 65px);
 }
 
@@ -530,26 +531,27 @@ input, textarea, select {
 
 .task-delete-btn {
     position: absolute;
-    top: 4px;
-    right: 4px;
+    top: -6px;
+    right: -6px;
     width: 22px;
     height: 22px;
     border-radius: 50%;
-    background: var(--bg-hover);
+    background: var(--bg-elevated);
     border: 1px solid var(--border);
     color: var(--text-muted);
     display: flex;
     align-items: center;
     justify-content: center;
     opacity: 0;
+    visibility: hidden;
     transition: all var(--transition-fast) ease;
-    z-index: 1;
+    z-index: 10;
     cursor: pointer;
 }
 
-.task-item:hover .task-delete-btn,
-.task-delete-btn:hover {
+.task-item:hover .task-delete-btn {
     opacity: 1;
+    visibility: visible;
 }
 
 .task-delete-btn:hover {
@@ -914,7 +916,7 @@ input, textarea, select {
 .thumbnail-preview {
     position: fixed;
     pointer-events: none;
-    z-index: 200;
+    z-index: 9999;
     opacity: 0;
     transition: opacity var(--transition-fast) ease;
     /* transform is set dynamically in JS */
@@ -997,4 +999,3 @@ input, textarea, select {
         padding: 16px 20px;
     }
 }
-

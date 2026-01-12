@@ -211,13 +211,7 @@ async function handleSubmit() {
             }
             
             const data = await response.json();
-            
-            // if (data.error) {
-            //     console.error('Submit error for line:', shareText, data.error);
-            //     hasError = true;
-            //     continue;
-            // }
-            
+
             // Create task entry
             const task = {
                 id: data.id,
@@ -295,24 +289,40 @@ function handleTasksListClick(e) {
 
 function handleTasksListMouseOver(e) {
     const taskItem = e.target.closest('.task-item');
-    if (!taskItem || taskItem === currentHoveredTask) return;
+    if (!taskItem) return;
+
+    // If same task, do nothing
+    if (taskItem === currentHoveredTask) return;
+
+    // Hide previous preview if any
+    if (currentHoveredTask) {
+        hideThumbnailPreview();
+    }
 
     currentHoveredTask = taskItem;
-    const isCompleted = taskItem.classList.contains('completed');
     const thumbnail = taskItem.dataset.thumbnail;
 
-    if (isCompleted && thumbnail && thumbnail !== '') {
+    // Show thumbnail preview if available
+    if (thumbnail && thumbnail !== '') {
         showThumbnailPreview(thumbnail, e);
     }
 }
 
 function handleTasksListMouseOut(e) {
-    const taskItem = e.target.closest('.task-item');
     const relatedTarget = e.relatedTarget;
 
-    // Check if we're leaving the task item (not just moving to a child)
-    if (taskItem && (!relatedTarget || !taskItem.contains(relatedTarget))) {
-        if (currentHoveredTask === taskItem) {
+    // Hide preview if mouse leaves the tasks list entirely
+    if (!relatedTarget || !elements.tasksList.contains(relatedTarget)) {
+        currentHoveredTask = null;
+        hideThumbnailPreview();
+        return;
+    }
+
+    // Hide preview if moving to a different task or outside any task
+    const newTaskItem = relatedTarget.closest('.task-item');
+    if (currentHoveredTask && newTaskItem !== currentHoveredTask) {
+        // Only hide if the new task doesn't have a thumbnail (mouseover will show it otherwise)
+        if (!newTaskItem) {
             currentHoveredTask = null;
             hideThumbnailPreview();
         }
@@ -320,13 +330,10 @@ function handleTasksListMouseOut(e) {
 }
 
 function handleTasksListMouseMove(e) {
-    const taskItem = e.target.closest('.task-item');
-    if (!taskItem) return;
+    if (!currentHoveredTask) return;
 
-    const isCompleted = taskItem.classList.contains('completed');
-    const thumbnail = taskItem.dataset.thumbnail;
-
-    if (isCompleted && thumbnail && thumbnail !== '') {
+    const thumbnail = currentHoveredTask.dataset.thumbnail;
+    if (thumbnail && thumbnail !== '') {
         moveThumbnailPreview(e);
     }
 }
@@ -867,13 +874,11 @@ function showThumbnailPreview(path, e) {
 
 function moveThumbnailPreview(e) {
     const preview = elements.thumbnailPreview;
-    const previewHeight = 220; // Approximate max height including margin
-    const previewWidth = 180;  // Approximate width including margin
+    const previewHeight = 220;
+    const previewWidth = 180;
     const margin = 20;
-    
-    const viewportHeight = window.innerHeight;
     const viewportWidth = window.innerWidth;
-    
+
     let x = e.clientX;
     let y;
     let transformY;
@@ -922,11 +927,14 @@ function loadTasksFromStorage() {
             state.tasks = JSON.parse(saved);
             renderTasks();
             updateTaskCount();
-            
-            // Resume polling for active tasks
+
             state.tasks.forEach((task) => {
                 if (task.status === 'pending' || task.status === 'processing') {
+                    // Resume polling for active tasks
                     startPolling(task.id);
+                } else if (task.status === 'completed' && task.postId && !task.thumbnailPath) {
+                    // Fetch missing thumbnail for completed tasks
+                    fetchPostDetails(task.id, task.postId);
                 }
             });
         }
@@ -985,4 +993,3 @@ function showNotification(message, type = 'info') {
         setTimeout(() => toast.remove(), 200);
     }, 3000);
 }
-
