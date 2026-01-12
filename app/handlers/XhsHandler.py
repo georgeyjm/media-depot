@@ -41,8 +41,6 @@ class XhsHandler(BaseHandler):
     
     def extract_info(self) -> PostInfo | None:
         '''Extract post metadata and information.'''
-        
-        # TODO: Check if post is non-existent
 
         # Use third-party API to extract post info and download links
         try:
@@ -53,9 +51,11 @@ class XhsHandler(BaseHandler):
             api_response.raise_for_status()
             api_data = api_response.json()
             if '成功' not in api_data.get('message') or not api_data.get('data'):
+                if 'xiaohongshu.com/404/' in self._resolved_url:
+                    # Post is non-existent
+                    return None
                 print(f'XHS API did not return valid data: {api_data}')
-                print(self._resolved_url)
-                return None
+                raise ValueError(f'XHS API did not return valid data')
             api_data = api_data.get('data')
         except Exception:
             raise  # In the future, simply return None
