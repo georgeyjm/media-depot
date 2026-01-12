@@ -3,7 +3,8 @@ from pathlib import Path
 from typing import Optional, Any
 
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy import or_, desc
+from sqlalchemy.orm import Session, joinedload
 
 from app.config import settings
 from app.models import Platform, Creator, Post, PostMedia, MediaAsset, Job
@@ -11,6 +12,24 @@ from app.models.enums import JobStatus, MediaType
 from app.schemas.post import PostInfo
 from app.schemas.media_asset import MediaAssetCreate
 from app.utils.download import download_file, hash_file
+
+
+def to_relative_media_path(path: Path | str) -> str:
+    '''Convert an absolute media path to a path relative to MEDIA_ROOT_DIR.'''
+    path = Path(path)
+    try:
+        return str(path.relative_to(settings.MEDIA_ROOT_DIR))
+    except ValueError:
+        # Path is already relative or not under MEDIA_ROOT_DIR
+        return str(path)
+
+
+def to_absolute_media_path(path: Path | str) -> Path:
+    '''Convert a relative media path to an absolute path under MEDIA_ROOT_DIR.'''
+    path = Path(path)
+    if path.is_absolute():
+        return path
+    return settings.MEDIA_ROOT_DIR / path
 
 
 def get_or_create_job_from_share(db: Session, share_text: str, share_url: str) -> Job:
@@ -197,29 +216,33 @@ def get_or_create_media_asset(db: Session, media_asset_info: MediaAssetCreate, c
     '''
     Get or create a MediaAsset record (by filepath, or by file size and checksum).
     '''
-    file_path = Path(media_asset_info.file_path)
-    if not file_path.exists():
-        raise FileNotFoundError(f'File not found: {file_path}')
-    
-    file_checksum = hash_file(file_path)
-    file_size = file_path.stat().st_size
+    # Use absolute path for file operations
+    absolute_path = to_absolute_media_path(media_asset_info.file_path)
+    if not absolute_path.exists():
+        raise FileNotFoundError(f'File not found: {absolute_path}')
+
+    file_checksum = hash_file(absolute_path)
+    file_size = absolute_path.stat().st_size
+
+    # Use relative path for database storage and queries
+    relative_path = to_relative_media_path(absolute_path)
 
     # Check if an entry with the same file path exists, or if an entry with the same checksum and size exists.
     media_asset = db.query(MediaAsset).filter_by(
-        file_path=str(file_path)
+        file_path=relative_path
     ).first() or db.query(MediaAsset).filter_by(
         checksum_sha256=file_checksum,
         file_size=file_size,
     ).first()
-    
+
     if media_asset:
         return media_asset
-    
+
     media_asset = MediaAsset(
         media_type=media_asset_info.media_type,
         url=media_asset_info.url,
-        file_path=str(file_path),
-        file_format=file_path.suffix.lstrip('.'),
+        file_path=relative_path,
+        file_format=absolute_path.suffix.lstrip('.'),
         file_size=file_size,
         checksum_sha256=file_checksum,
     )
@@ -308,3 +331,66 @@ def link_post_media_asset(db: Session, post: Post, media_asset: MediaAsset, posi
         db.flush()
 
     return post_media
+
+
+def get_platforms(db: Session) -> list[Platform]:
+    '''
+    Get all Platform records.
+    '''
+    return db.query(Platform).all()
+
+
+def get_partial_posts(
+    db: Session,
+    page: int = 1,
+    per_page: int = 24,
+    platform: Optional[str] = None,
+    post_type: Optional[str] = None,
+    search: Optional[str] = None,
+) -> tuple[list[Post], int]:
+    '''
+    Get all Post records with pagination and filtering.
+    '''    
+    # Apply filters
+    base_query = db.query(Post)
+    if platform:
+        base_query = base_query.join(Post.platform).filter(Platform.name == platform)
+    if post_type:
+        base_query = base_query.filter(Post.post_type == post_type)
+    if search:
+        # Join Creator for author search fields
+        base_query = base_query.join(Post.creator)
+        search_pattern = f'%{search}%'
+        base_query = base_query.filter(
+            or_(
+                Post.title.ilike(search_pattern),
+                Creator.username.ilike(search_pattern),
+                Creator.display_name.ilike(search_pattern),
+                Post.caption_text.ilike(search_pattern),
+            )
+        )
+    
+    # Get total count (before pagination)
+    total = base_query.count()
+    
+    # Now add eager loading and pagination
+    posts = base_query.options(
+        joinedload(Post.platform),
+        joinedload(Post.creator).joinedload(Creator.profile_pic),
+        joinedload(Post.thumbnail),
+    ).order_by(desc(Post.created_at)).offset((page - 1) * per_page).limit(per_page).all()
+
+    return posts, total
+
+
+def get_post(db: Session, post_id: int) -> Post | None:
+    '''
+    Get a Post record by ID.
+    '''
+    post = db.query(Post).options(
+        joinedload(Post.platform),
+        joinedload(Post.creator).joinedload(Creator.profile_pic),
+        joinedload(Post.thumbnail),
+        joinedload(Post.media_items).joinedload(PostMedia.media_asset),
+    ).get(post_id)
+    return post

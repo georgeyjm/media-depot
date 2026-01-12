@@ -1,4 +1,3 @@
-from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
@@ -7,6 +6,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models import Base, TimestampMixin
 from app.models.enums import PostType, JobStatus
+from app.utils.db import to_absolute_media_path
 
 
 class Post(Base, TimestampMixin):
@@ -40,18 +40,22 @@ class Post(Base, TimestampMixin):
         Index('ix_posts_creator_published', 'creator_id', 'platform_created_at'),
     )
     
+    @property
+    def thumbnail_path(self) -> Optional[str]:
+        return self.thumbnail.file_path if self.thumbnail else None
+
     def __repr__(self) -> str:
         return f'<Post {self.platform_post_id}:{self.title or "Untitled"}>'
     
     def all_media_exists(self) -> bool:
         '''Check if all media items exist on disk.
-        
+
         Returns:
             True if post has media_items and all files exist on disk, False otherwise.
         '''
         if not self.media_items:
             return False  # No media items means nothing exists
-        return all(Path(post_media.media_asset.file_path).exists() for post_media in self.media_items)
+        return all(to_absolute_media_path(post_media.media_asset.file_path).exists() for post_media in self.media_items)
     
     def has_completed_job(self) -> bool:
         '''Check if there's at least one completed job for this post.

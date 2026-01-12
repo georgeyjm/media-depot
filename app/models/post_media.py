@@ -2,6 +2,7 @@ from sqlalchemy import ForeignKey, Integer, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models import Base, TimestampMixin
+from app.models.enums import MediaType
 
 
 class PostMedia(Base, TimestampMixin):
@@ -23,6 +24,14 @@ class PostMedia(Base, TimestampMixin):
     __table_args__ = (
         UniqueConstraint('post_id', 'media_asset_id', name='uq_post_media_asset'),
     )
+
+    @property
+    def media_type(self) -> MediaType:
+        return self.media_asset.media_type
+
+    @property
+    def file_path(self) -> str:
+        return self.media_asset.file_path
 
     def __repr__(self) -> str:
         return f'<PostMedia {self.post_id} -> {self.media_asset_id}>'

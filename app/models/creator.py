@@ -31,6 +31,10 @@ class Creator(Base, TimestampMixin, MetadataJSONMixin):
         Index('ix_creators_platform_username', 'platform_id', 'username'),
     )
     
+    @property
+    def profile_pic_path(self) -> Optional[str]:
+        return self.profile_pic.file_path if self.profile_pic else None
+
     def __repr__(self) -> str:
         return f'<Creator {self.platform.name}:{self.username or self.platform_account_id}>'
 
