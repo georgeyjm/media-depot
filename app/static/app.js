@@ -6,7 +6,7 @@
 const state = {
     currentPage: 'home',
     drawerOpen: false,
-    tasks: [], // { id, shareText, status, title, thumbnailPath, postId, createdAt }
+    tasks: [], // { id, shareText, shareUrl, status, title, thumbnailPath, postId, createdAt }
     posts: {
         items: [],
         page: 1,
@@ -40,6 +40,7 @@ const elements = {
     tasksList: $('#tasks-list'),
     drawerToggle: $('#drawer-toggle'),
     closeDrawerBtn: $('#close-drawer-btn'),
+    clearAllTasksBtn: $('#clear-all-tasks-btn'),
     taskCount: $('#task-count'),
     
     // Library
@@ -260,6 +261,74 @@ async function handleSubmit() {
 function initDrawer() {
     elements.drawerToggle.addEventListener('click', toggleDrawer);
     elements.closeDrawerBtn.addEventListener('click', closeDrawer);
+    elements.clearAllTasksBtn.addEventListener('click', clearAllTasks);
+
+    // Event delegation for task items
+    elements.tasksList.addEventListener('click', handleTasksListClick);
+    elements.tasksList.addEventListener('mouseover', handleTasksListMouseOver);
+    elements.tasksList.addEventListener('mouseout', handleTasksListMouseOut);
+    elements.tasksList.addEventListener('mousemove', handleTasksListMouseMove);
+}
+
+let currentHoveredTask = null;
+
+function handleTasksListClick(e) {
+    // Check if delete button was clicked
+    const deleteBtn = e.target.closest('.task-delete-btn');
+    if (deleteBtn) {
+        e.stopPropagation();
+        const taskId = deleteBtn.dataset.taskId;
+        deleteTask(taskId);
+        return;
+    }
+
+    // Check if task item was clicked
+    const taskItem = e.target.closest('.task-item');
+    if (taskItem) {
+        const postId = taskItem.dataset.postId;
+        const isCompleted = taskItem.classList.contains('completed');
+        if (postId && postId !== '' && isCompleted) {
+            openPostModal(parseInt(postId));
+        }
+    }
+}
+
+function handleTasksListMouseOver(e) {
+    const taskItem = e.target.closest('.task-item');
+    if (!taskItem || taskItem === currentHoveredTask) return;
+
+    currentHoveredTask = taskItem;
+    const isCompleted = taskItem.classList.contains('completed');
+    const thumbnail = taskItem.dataset.thumbnail;
+
+    if (isCompleted && thumbnail && thumbnail !== '') {
+        showThumbnailPreview(thumbnail, e);
+    }
+}
+
+function handleTasksListMouseOut(e) {
+    const taskItem = e.target.closest('.task-item');
+    const relatedTarget = e.relatedTarget;
+
+    // Check if we're leaving the task item (not just moving to a child)
+    if (taskItem && (!relatedTarget || !taskItem.contains(relatedTarget))) {
+        if (currentHoveredTask === taskItem) {
+            currentHoveredTask = null;
+            hideThumbnailPreview();
+        }
+    }
+}
+
+function handleTasksListMouseMove(e) {
+    const taskItem = e.target.closest('.task-item');
+    if (!taskItem) return;
+
+    const isCompleted = taskItem.classList.contains('completed');
+    const thumbnail = taskItem.dataset.thumbnail;
+
+    if (isCompleted && thumbnail && thumbnail !== '') {
+        moveThumbnailPreview(e);
+    }
 }
 
 function toggleDrawer() {
@@ -327,41 +396,28 @@ function renderTasks() {
     }
     
     tasksList.innerHTML = state.tasks.map((task) => `
-        <div class="task-item ${task.status}" 
-             data-task-id="${task.id}" 
+        <div class="task-item ${task.status}"
+             data-task-id="${task.id}"
              data-post-id="${task.postId || ''}"
              data-thumbnail="${task.thumbnailPath || ''}">
+            <button class="task-delete-btn" data-task-id="${task.id}" title="Delete task">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="6" x2="6" y2="18"/>
+                    <line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+            </button>
             <div class="task-header">
                 <div class="task-status ${task.status}">
                     ${getStatusIcon(task.status)}
                 </div>
                 <div class="task-content">
                     ${task.title ? `<div class="task-title">${escapeHtml(task.title)}</div>` : ''}
-                    <div class="task-text">${escapeHtml(task.shareText)}</div>
+                    <div class="task-text">${escapeHtml(task.shareUrl || task.shareText)}</div>
                     <div class="task-time">${formatTime(task.createdAt)}</div>
                 </div>
             </div>
         </div>
     `).join('');
-    
-    // Add click handlers
-    tasksList.querySelectorAll('.task-item').forEach((item) => {
-        const postId = item.dataset.postId;
-        const isCompleted = item.classList.contains('completed');
-        
-        if (postId && postId !== '' && isCompleted) {
-            item.style.cursor = 'pointer';
-            item.addEventListener('click', () => openPostModal(parseInt(postId)));
-            
-            // Hover thumbnail preview
-            const thumbnail = item.dataset.thumbnail;
-            if (thumbnail && thumbnail !== '') {
-                item.addEventListener('mouseenter', (e) => showThumbnailPreview(thumbnail, e));
-                item.addEventListener('mousemove', (e) => moveThumbnailPreview(e));
-                item.addEventListener('mouseleave', hideThumbnailPreview);
-            }
-        }
-    });
 }
 
 function getStatusIcon(status) {
@@ -388,13 +444,35 @@ function getStatusIcon(status) {
 function updateTaskCount() {
     const activeCount = state.tasks.filter((t) => t.status === 'pending' || t.status === 'processing').length;
     const { taskCount } = elements;
-    
+
     if (activeCount > 0) {
         taskCount.textContent = activeCount;
         taskCount.style.display = 'flex';
     } else {
         taskCount.style.display = 'none';
     }
+}
+
+function deleteTask(taskId) {
+    // Stop polling if active
+    stopPolling(taskId);
+
+    // Remove from state (compare as strings to handle type mismatch)
+    state.tasks = state.tasks.filter((t) => String(t.id) !== String(taskId));
+    saveTasksToStorage();
+    renderTasks();
+    updateTaskCount();
+}
+
+function clearAllTasks() {
+    // Stop all polling
+    Object.keys(state.pollingIntervals).forEach((taskId) => stopPolling(taskId));
+
+    // Clear all tasks
+    state.tasks = [];
+    saveTasksToStorage();
+    renderTasks();
+    updateTaskCount();
 }
 
 // ===== Task Polling =====
@@ -431,13 +509,18 @@ async function pollTask(taskId) {
         const updates = {
             status: data.status,
         };
-        
+
+        // Capture share_url from response if available
+        if (data.share_url && !task.shareUrl) {
+            updates.shareUrl = data.share_url;
+        }
+
         // If we have a post_id, fetch post details for title and thumbnail
         if (data.post_id && !task.postId) {
             updates.postId = data.post_id;
             fetchPostDetails(taskId, data.post_id);
         }
-        
+
         updateTask(taskId, updates);
         updateTaskCount();
         
@@ -455,10 +538,10 @@ async function fetchPostDetails(taskId, postId) {
     try {
         const response = await fetch(`/api/posts/${postId}`);
         if (!response.ok) return;
-        
+
         const post = await response.json();
         updateTask(taskId, {
-            title: post.title,
+            title: post.title || post.caption_text,
             thumbnailPath: post.thumbnail_path,
         });
     } catch (err) {

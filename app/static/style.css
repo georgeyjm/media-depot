@@ -477,6 +477,12 @@ input, textarea, select {
     white-space: nowrap;
 }
 
+.drawer-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
 .icon-btn {
     width: 32px;
     height: 32px;
@@ -500,6 +506,7 @@ input, textarea, select {
 }
 
 .task-item {
+    position: relative;
     padding: 14px;
     background: var(--bg-tertiary);
     border-radius: var(--radius-md);
@@ -508,7 +515,7 @@ input, textarea, select {
     border: 1px solid transparent;
 }
 
-.task-item.completed {
+.task-item.completed[data-post-id]:not([data-post-id=""]) {
     cursor: pointer;
 }
 
@@ -519,6 +526,36 @@ input, textarea, select {
 .task-item.completed:hover {
     border-color: var(--accent);
     background: var(--bg-elevated);
+}
+
+.task-delete-btn {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--bg-hover);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: all var(--transition-fast) ease;
+    z-index: 1;
+    cursor: pointer;
+}
+
+.task-item:hover .task-delete-btn,
+.task-delete-btn:hover {
+    opacity: 1;
+}
+
+.task-delete-btn:hover {
+    background: var(--error);
+    border-color: var(--error);
+    color: white;
 }
 
 .task-header {
