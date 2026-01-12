@@ -29,6 +29,10 @@ def to_absolute_media_path(path: Path | str) -> Path:
     path = Path(path)
     if path.is_absolute():
         return path
+    if path.is_relative_to(settings.MEDIA_ROOT_DIR) and path.exists():
+        # Honestly, this is kind of a hack -- a catch-all approach.
+        # It is better if we can make sure whether the returns of each function is absolute or not.
+        return path
     return settings.MEDIA_ROOT_DIR / path
 
 

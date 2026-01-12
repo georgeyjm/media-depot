@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 from app.config import settings
 from app.db import engine, SessionLocal
 from app.models import Base
-from app.routers import downloads_router, posts_router
+from app.routers import downloads_router, posts_router, media_router
 from app.handlers import initialize_platforms
 
 
@@ -65,8 +65,10 @@ async def library():
 app.include_router(downloads_router, prefix='/api')
 app.include_router(posts_router, prefix='/api')
 
+### Media route (with automatic HEIF/AVIF conversion)
+
+app.include_router(media_router)
 
 ### Static file mounts (must be after explicit routes)
 
-app.mount('/media', StaticFiles(directory=settings.MEDIA_ROOT_DIR), name='media')
 app.mount('/static', StaticFiles(directory=FRONTEND_DIR), name='static')

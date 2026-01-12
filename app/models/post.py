@@ -5,7 +5,7 @@ from sqlalchemy import String, DateTime, Text, ForeignKey, Index, UniqueConstrai
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models import Base, TimestampMixin
-from app.models.enums import PostType, JobStatus
+from app.models.enums import PostType, JobStatus, MediaType
 
 
 class Post(Base, TimestampMixin):
@@ -44,8 +44,9 @@ class Post(Base, TimestampMixin):
         if self.thumbnail:
             return self.thumbnail.file_path
         # Fall back to first media item's file path
-        if self.media_items:
-            first_item = min(self.media_items, key=lambda x: x.position)
+        if self.post_type == PostType.carousel and self.media_items:
+            image_items = filter(lambda m: m.media_asset.media_type in (MediaType.image, MediaType.live_photo), self.media_items)
+            first_item = min(image_items, key=lambda x: x.position)
             return first_item.file_path
         return None
 

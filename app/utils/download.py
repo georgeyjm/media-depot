@@ -9,6 +9,7 @@ from urllib.parse import urlparse, unquote
 from mimetypes import guess_extension
 
 import httpx
+import magic
 from yt_dlp import YoutubeDL
 
 from app.config import settings
@@ -168,6 +169,91 @@ def _get_cookies(url: str) -> dict[str, str]:
         
         cookies = filtered_cookies if filtered_cookies else None
         return cookies
+
+
+def _get_valid_extensions(format: str) -> list[str]:
+    '''
+    Get valid extensions for a given format.
+    '''
+    return {
+        'jpeg': ['.jpg', '.jpeg'],
+        'png': ['.png'],
+        'gif': ['.gif'],
+        'webp': ['.webp'],
+        'heif': ['.heic', '.heif'],
+        'avif': ['.avif'],
+        'bmp': ['.bmp'],
+        'tiff': ['.tiff', '.tif'],
+        'mp4': ['.mp4', '.m4v'],
+        'quicktime': ['.mov', '.qt'],
+        'webm': ['.webm'],
+        'matroska': ['.mkv', '.webm'],
+        'avi': ['.avi'],
+    }.get(format, [])
+
+
+def _detect_file_format(file_path: Path) -> str | None:
+    '''Detect actual file format using libmagic.'''
+    try:
+        description = magic.from_file(str(file_path)).lower()
+    except Exception:
+        return None
+
+    if 'jpeg' in description:
+        return 'jpeg'
+    elif 'png' in description:
+        return 'png'
+    elif 'gif' in description:
+        return 'gif'
+    elif 'webp' in description or 'web/p' in description:
+        return 'webp'
+    elif 'heif' in description or 'heic' in description:
+        return 'heif'
+    elif 'avif' in description:
+        return 'avif'
+    elif 'bmp' in description:
+        return 'bmp'
+    elif 'tiff' in description:
+        return 'tiff'
+    elif 'mp4' in description or 'iso media' in description:
+        return 'mp4'
+    elif 'quicktime' in description:
+        return 'quicktime'
+    elif 'webm' in description:
+        return 'webm'
+    elif 'matroska' in description:
+        return 'matroska'
+    elif 'avi' in description:
+        return 'avi'
+    return None
+
+
+def _fix_file_extension(file_path: Path) -> Path:
+    '''
+    Check if file extension matches actual format and rename if needed.
+
+    Returns the (possibly new) file path.
+    '''
+    detected_format = _detect_file_format(file_path)
+    if not detected_format:
+        return file_path
+    valid_exts = _get_valid_extensions(detected_format)
+    if not valid_exts:
+        return file_path
+    current_ext = file_path.suffix.lower()
+    if current_ext in valid_exts:
+        return file_path
+
+    # Extension mismatch - rename to preferred extension (first in list)
+    new_ext = valid_exts[0]
+    new_path = file_path.with_suffix(new_ext)
+    if new_path.exists():
+        # Handle conflicts
+        unique_id = uuid.uuid4().hex[:8]
+        new_path = file_path.parent / f'{file_path.stem}_{unique_id}{new_ext}'
+
+    file_path.rename(new_path)
+    return new_path
 
 
 def download_yt_dlp(
@@ -456,6 +542,7 @@ def download_file(
                                 response.raise_for_status()
                                 for chunk in response.iter_bytes(chunk_size=chunk_size):
                                     f.write(chunk)
+                            file_path = _fix_file_extension(file_path)
                             return file_path
                         else:
                             response.raise_for_status()
@@ -463,7 +550,8 @@ def download_file(
                     with file_path.open(file_mode) as f:
                         for chunk in response.iter_bytes(chunk_size=chunk_size):
                             f.write(chunk)
-                    
+
+                    file_path = _fix_file_extension(file_path)
                     return file_path
             
             except (httpx.RemoteProtocolError, httpx.ReadTimeout, httpx.ConnectTimeout, httpx.HTTPStatusError) as e:

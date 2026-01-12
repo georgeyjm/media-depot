@@ -33,5 +33,5 @@ class MediaAsset(Base, TimestampMixin):
     )
     
     def __repr__(self) -> str:
-        return f'<MediaFile {self.file_type}:{self.file_path or self.url}>'
+        return f'<MediaFile {self.media_type}:{self.file_path or self.url}>'
 

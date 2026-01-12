@@ -16,7 +16,6 @@ class Settings(BaseSettings):
     CACHE_DIR: Path = Path('.cache')
     COOKIES_REFRESH_INTERVAL: int = 3600  # Default: 1 hour
     JOB_RETRIES: int = 3
-    USE_MAGIC_EXTENSION: bool = False
     
     @field_validator('MEDIA_ROOT_DIR', 'CACHE_DIR', mode='before')
     @classmethod
