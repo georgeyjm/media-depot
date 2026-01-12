@@ -588,22 +588,27 @@ function renderPosts() {
         return;
     }
     
-    postsGrid.innerHTML = state.posts.items.map((post) => `
+    postsGrid.innerHTML = state.posts.items.map((post) => {
+        const thumbnailSrc = post.thumbnail_path ? `/media/${post.thumbnail_path}` : '';
+        const displayTitle = post.title || post.caption_text || 'Untitled';
+
+        return `
         <div class="post-card" data-post-id="${post.id}">
-            <img class="post-thumbnail" 
-                 src="${post.thumbnail_path ? `/media/${post.thumbnail_path}` : ''}" 
+            <img class="post-thumbnail"
+                 src="${thumbnailSrc}"
                  alt="${escapeHtml(post.title || 'Post')}"
                  loading="lazy"
                  onerror="this.style.display='none'">
             <div class="post-info">
-                <div class="post-card-title">${escapeHtml(post.title || 'Untitled')}</div>
+                <div class="post-card-title">${escapeHtml(displayTitle)}</div>
                 <div class="post-meta">
                     <span class="platform-badge">${post.platform.name}</span>
                     <span>@${escapeHtml(post.creator.username || post.creator.display_name || 'Unknown')}</span>
                 </div>
             </div>
         </div>
-    `).join('');
+    `;
+    }).join('');
     
     // Add click handlers
     postsGrid.querySelectorAll('.post-card').forEach((card) => {

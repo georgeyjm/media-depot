@@ -41,7 +41,13 @@ class Post(Base, TimestampMixin):
     
     @property
     def thumbnail_path(self) -> Optional[str]:
-        return self.thumbnail.file_path if self.thumbnail else None
+        if self.thumbnail:
+            return self.thumbnail.file_path
+        # Fall back to first media item's file path
+        if self.media_items:
+            first_item = min(self.media_items, key=lambda x: x.position)
+            return first_item.file_path
+        return None
 
     def __repr__(self) -> str:
         return f'<Post {self.platform_post_id}:{self.title or "Untitled"}>'

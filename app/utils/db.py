@@ -378,6 +378,7 @@ def get_partial_posts(
         joinedload(Post.platform),
         joinedload(Post.creator).joinedload(Creator.profile_pic),
         joinedload(Post.thumbnail),
+        # joinedload(Post.media_items).joinedload(PostMedia.media_asset),
     ).order_by(desc(Post.created_at)).offset((page - 1) * per_page).limit(per_page).all()
 
     return posts, total
