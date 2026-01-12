@@ -9,14 +9,13 @@ from app.models.enums import JobStatus
 class JobBase(BaseModel):
     '''Base schema for Job.'''
     share_text: str
-    share_url: str
     status: JobStatus
     post_id: Optional[int] = None
 
 
 class JobCreate(JobBase):
     '''Schema for creating a new Job.'''
-    pass
+    share_url: str
 
 
 class JobUpdate(BaseModel):

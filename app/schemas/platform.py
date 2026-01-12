@@ -23,8 +23,6 @@ class PlatformUpdate(BaseModel):
 class PlatformResponse(PlatformBase):
     '''Schema for Platform API responses.'''
     id: int
-    created_at: datetime
-    updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 

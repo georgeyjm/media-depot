@@ -1,3 +1,9 @@
+from app.schemas.platform import (
+    PlatformBase,
+    PlatformCreate,
+    PlatformUpdate,
+    PlatformResponse,
+)
 from app.schemas.creator import (
     CreatorBase,
     CreatorCreate,
@@ -10,24 +16,19 @@ from app.schemas.media_asset import (
     MediaAssetUpdate,
     MediaAssetResponse,
 )
-from app.schemas.post_media import (
-    PostMediaBase,
-    PostMediaCreate,
-    PostMediaUpdate,
-    PostMediaResponse,
-)
 from app.schemas.post import (
     PostBase,
     PostInfo,
     PostCreate,
     PostUpdate,
     PostResponse,
+    PostDetailedResponse,
 )
-from app.schemas.platform import (
-    PlatformBase,
-    PlatformCreate,
-    PlatformUpdate,
-    PlatformResponse,
+from app.schemas.post_media import (
+    PostMediaBase,
+    PostMediaCreate,
+    PostMediaUpdate,
+    PostMediaResponse,
 )
 from app.schemas.job import (
     JobBase,
@@ -59,6 +60,7 @@ __all__ = [
     'PostCreate',
     'PostUpdate',
     'PostResponse',
+    'PostDetailedResponse',
     # Platform schemas
     'PlatformBase',
     'PlatformCreate',
