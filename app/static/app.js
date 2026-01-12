@@ -839,13 +839,14 @@ async function openPostModal(postId) {
             elements.creatorAvatar.style.display = 'none';
         }
         
-        // Show navigation if multiple media
-        if (post.media_items && post.media_items.length > 1) {
+        // Show navigation if multiple displayable media items
+        const displayableItems = getDisplayableMediaItems(post.media_items);
+        if (displayableItems.length > 1) {
             elements.mediaNav.style.display = 'flex';
         } else {
             elements.mediaNav.style.display = 'none';
         }
-        
+
         renderCurrentMedia();
         elements.mediaModal.classList.add('active');
         document.body.style.overflow = 'hidden';
@@ -856,6 +857,43 @@ async function openPostModal(postId) {
     }
 }
 
+/**
+ * Process media items into displayable items.
+ * Merges live_photo and live_video (same position) into a single displayable item.
+ */
+function getDisplayableMediaItems(mediaItems) {
+    if (!mediaItems) return [];
+
+    const displayable = [];
+    const liveVideosByPosition = new Map();
+
+    // First pass: collect live_video items by position
+    for (const item of mediaItems) {
+        if (item.media_type === 'live_video') {
+            liveVideosByPosition.set(item.position, item);
+        }
+    }
+
+    // Second pass: create displayable items (skip live_video, merge with live_photo)
+    for (const item of mediaItems) {
+        if (item.media_type === 'live_video') {
+            continue; // Skip, will be merged with live_photo
+        }
+
+        if (item.media_type === 'live_photo') {
+            // Merge with corresponding live_video
+            displayable.push({
+                ...item,
+                liveVideo: liveVideosByPosition.get(item.position) || null
+            });
+        } else {
+            displayable.push(item);
+        }
+    }
+
+    return displayable;
+}
+
 function renderCurrentMedia() {
     const post = state.currentPost;
     if (!post || !post.media_items || post.media_items.length === 0) {
@@ -863,7 +901,8 @@ function renderCurrentMedia() {
         return;
     }
 
-    const mediaItem = post.media_items[state.currentMediaIndex];
+    const displayableItems = getDisplayableMediaItems(post.media_items);
+    const mediaItem = displayableItems[state.currentMediaIndex];
     if (!mediaItem || !mediaItem.file_path) {
         elements.mediaViewer.innerHTML = '<p style="color: var(--text-muted);">Media not found</p>';
         return;
@@ -875,6 +914,23 @@ function renderCurrentMedia() {
         elements.mediaViewer.innerHTML = `
             <video src="${mediaPath}" controls autoplay playsinline></video>
         `;
+    } else if (mediaItem.media_type === 'live_photo' && mediaItem.liveVideo) {
+        // Live photo with video component
+        const videoPath = `/media/${mediaItem.liveVideo.file_path}`;
+        elements.mediaViewer.innerHTML = `
+            <div class="live-photo-container">
+                <img class="live-photo-image" src="${mediaPath}" alt="${escapeHtml(post.title || 'Media')}">
+                <video class="live-photo-video" src="${videoPath}" loop muted playsinline></video>
+                <div class="live-photo-icon" title="Live Photo - Hover to play">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                        <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/>
+                        <circle cx="12" cy="12" r="4"/>
+                    </svg>
+                </div>
+            </div>
+        `;
+        // Add hover event listeners for live photo
+        initLivePhotoHover();
     } else {
         elements.mediaViewer.innerHTML = `
             <img src="${mediaPath}" alt="${escapeHtml(post.title || 'Media')}">
@@ -882,19 +938,46 @@ function renderCurrentMedia() {
     }
 
     // Update counter
-    elements.mediaCounter.textContent = `${state.currentMediaIndex + 1} / ${post.media_items.length}`;
+    elements.mediaCounter.textContent = `${state.currentMediaIndex + 1} / ${displayableItems.length}`;
 
     // Update nav buttons
     elements.mediaPrev.disabled = state.currentMediaIndex === 0;
-    elements.mediaNext.disabled = state.currentMediaIndex === post.media_items.length - 1;
+    elements.mediaNext.disabled = state.currentMediaIndex === displayableItems.length - 1;
+}
+
+/**
+ * Initialize hover interaction for live photos.
+ * On icon hover, show and play the video; on mouse leave, show the image.
+ */
+function initLivePhotoHover() {
+    const container = elements.mediaViewer.querySelector('.live-photo-container');
+    if (!container) return;
+
+    const icon = container.querySelector('.live-photo-icon');
+    const video = container.querySelector('.live-photo-video');
+    const image = container.querySelector('.live-photo-image');
+
+    if (!icon || !video || !image) return;
+
+    icon.addEventListener('mouseenter', () => {
+        container.classList.add('playing');
+        video.currentTime = 0;
+        video.play().catch(() => {});
+    });
+
+    icon.addEventListener('mouseleave', () => {
+        container.classList.remove('playing');
+        video.pause();
+    });
 }
 
 function navigateMedia(direction) {
     if (!state.currentPost) return;
-    
+
+    const displayableItems = getDisplayableMediaItems(state.currentPost.media_items);
     const newIndex = state.currentMediaIndex + direction;
-    if (newIndex < 0 || newIndex >= state.currentPost.media_items.length) return;
-    
+    if (newIndex < 0 || newIndex >= displayableItems.length) return;
+
     state.currentMediaIndex = newIndex;
     renderCurrentMedia();
 }
