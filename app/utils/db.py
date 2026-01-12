@@ -132,7 +132,7 @@ def get_or_create_creator(db: Session, platform: Platform, post_info: PostInfo, 
     return creator
 
 
-def get_post(db: Session, platform: Platform, post_info: PostInfo) -> Post | None:
+def get_post_by_platform_info(db: Session, platform: Platform, post_info: PostInfo) -> Post | None:
     '''
     Get a Post record by platform and post ID.
     '''
@@ -193,7 +193,7 @@ def create_post(db: Session, platform: Platform, post_info: PostInfo, download_t
     return post
 
 
-def get_or_create_post(db: Session, platform: Platform, post_info: PostInfo, commit: bool = True) -> Post:
+def get_or_create_post_by_platform_info(db: Session, platform: Platform, post_info: PostInfo, commit: bool = True) -> Post:
     '''
     Get or create a Post record.
     
@@ -205,7 +205,7 @@ def get_or_create_post(db: Session, platform: Platform, post_info: PostInfo, com
     Returns:
         Post instance (existing or newly created)
     '''
-    post = get_post(db=db, platform=platform, post_info=post_info)
+    post = get_post_by_platform_info(db=db, platform=platform, post_info=post_info)
     if not post:
         post = create_post(db=db, platform=platform, post_info=post_info, commit=commit)
     

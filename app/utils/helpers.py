@@ -32,12 +32,16 @@ def unescape_unicode(text: str) -> str:
 
 def sanitize_filename(filename: str) -> str:
     '''
-    Sanitize a filename to make it safe for filesystem operations.
-    
+    Sanitize a filename to make it safe for filesystem operations and URLs.
+
+    Removes characters that are:
+    - Unsafe for filesystems: < > : " / \\ | ? *
+    - Unsafe for URLs: # % & + = ; @ ! $ ' ( ) ,
+
     Args:
         filename: The filename to sanitize
-        
+
     Returns:
         The sanitized filename
     '''
-    return re.sub(r'[<>:"/\\|?*]', '_', filename)
+    return re.sub(r'[<>:"/\\|?*#%&+=;@!$\'(),]', '_', filename)

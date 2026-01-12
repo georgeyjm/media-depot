@@ -7,7 +7,7 @@ from app.config import settings
 from app.models import Job
 from app.models.enums import JobStatus
 from app.handlers import get_handler_from_share
-from app.utils.db import get_or_create_post
+from app.utils.db import get_or_create_post_by_platform_info
 
 
 def process_download_job(job_id: int) -> None:
@@ -56,7 +56,7 @@ def process_download_job(job_id: int) -> None:
             return
         
         # Get or create the post, and link job to post
-        post = get_or_create_post(db=db, platform=handler.PLATFORM, post_info=post_info)
+        post = get_or_create_post_by_platform_info(db=db, platform=handler.PLATFORM, post_info=post_info)
         job.post_id = post.id
         db.commit()
         
