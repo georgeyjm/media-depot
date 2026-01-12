@@ -377,10 +377,59 @@ function addTask(task) {
 
 function updateTask(taskId, updates) {
     const task = state.tasks.find((t) => t.id === taskId);
-    if (task) {
-        Object.assign(task, updates);
-        saveTasksToStorage();
+    if (!task) return;
+
+    // Check if any values actually changed
+    const hasChanges = Object.keys(updates).some((key) => task[key] !== updates[key]);
+    if (!hasChanges) return;
+
+    Object.assign(task, updates);
+    saveTasksToStorage();
+
+    // Update specific DOM element instead of full re-render
+    updateTaskElement(taskId, task);
+}
+
+function updateTaskElement(taskId, task) {
+    const taskItem = elements.tasksList.querySelector(`[data-task-id="${taskId}"]`);
+    if (!taskItem) {
+        // Task element not found, do full re-render
         renderTasks();
+        return;
+    }
+
+    // Update status class
+    taskItem.className = `task-item ${task.status}`;
+
+    // Update data attributes
+    taskItem.dataset.postId = task.postId || '';
+    taskItem.dataset.thumbnail = task.thumbnailPath || '';
+
+    // Update status icon
+    const statusDiv = taskItem.querySelector('.task-status');
+    if (statusDiv) {
+        statusDiv.className = `task-status ${task.status}`;
+        statusDiv.innerHTML = getStatusIcon(task.status);
+    }
+
+    // Update title (add if now present, wasn't before)
+    const contentDiv = taskItem.querySelector('.task-content');
+    if (contentDiv) {
+        const existingTitle = contentDiv.querySelector('.task-title');
+        if (task.title && !existingTitle) {
+            const titleDiv = document.createElement('div');
+            titleDiv.className = 'task-title';
+            titleDiv.textContent = task.title;
+            contentDiv.insertBefore(titleDiv, contentDiv.firstChild);
+        } else if (task.title && existingTitle) {
+            existingTitle.textContent = task.title;
+        }
+
+        // Update share URL if changed
+        const textDiv = contentDiv.querySelector('.task-text');
+        if (textDiv && task.shareUrl) {
+            textDiv.textContent = task.shareUrl;
+        }
     }
 }
 
@@ -530,10 +579,17 @@ async function pollTask(taskId) {
 
         updateTask(taskId, updates);
         updateTaskCount();
-        
+
         // Stop polling if completed or failed
         if (data.status === 'completed' || data.status === 'failed' || data.status === 'canceled') {
             stopPolling(taskId);
+
+            // Re-fetch post details if completed without thumbnail
+            // (Xiaohongshu falls back to first media item, which isn't available until download completes)
+            const updatedTask = state.tasks.find((t) => t.id === taskId);
+            if (data.status === 'completed' && updatedTask?.postId && !updatedTask.thumbnailPath) {
+                fetchPostDetails(taskId, updatedTask.postId);
+            }
         }
         
     } catch (err) {
