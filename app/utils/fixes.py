@@ -6,7 +6,66 @@ from sqlalchemy.orm import Session
 
 from app.models import MediaAsset
 from app.utils.db import to_relative_media_path, to_absolute_media_path
+from app.utils.download import _detect_file_format, _get_valid_extensions
 from app.utils.helpers import sanitize_filename
+
+
+def fix_mismatched_extensions(db: Session) -> tuple[int, list[str]]:
+    '''
+    Find and fix media files where the extension doesn't match the actual format.
+    Renames files to use the correct extension and updates database records.
+
+    Returns:
+        Tuple of (number of files fixed, list of error messages).
+    '''
+    fixed = 0
+    errors = []
+
+    for asset in db.query(MediaAsset).all():
+        absolute_path = to_absolute_media_path(asset.file_path)
+        if not absolute_path.exists():
+            print(f'File not found: {absolute_path}')
+            continue
+
+        detected_format = _detect_file_format(absolute_path)
+        if not detected_format:
+            continue
+        valid_exts = _get_valid_extensions(detected_format)
+        if not valid_exts:
+            continue
+        current_ext = absolute_path.suffix.lower()
+        if current_ext in valid_exts:
+            continue
+
+        # Extension mismatch - rename to preferred extension (first in list)
+        new_ext = valid_exts[0]
+        relative_path = Path(asset.file_path)
+        new_relative_path = relative_path.with_suffix(new_ext)
+        new_absolute_path = to_absolute_media_path(new_relative_path)
+
+        # Handle filename conflicts
+        if new_absolute_path.exists():
+            unique_suffix = uuid.uuid4().hex[:8]
+            new_filename = f'{relative_path.stem}_{unique_suffix}{new_ext}'
+            new_relative_path = relative_path.parent / new_filename
+            new_absolute_path = to_absolute_media_path(new_relative_path)
+
+        # Rename the file
+        try:
+            absolute_path.rename(new_absolute_path)
+        except OSError as e:
+            errors.append(f'Failed to rename {absolute_path}: {e}')
+            continue
+
+        # Update database record
+        asset.file_path = str(new_relative_path)
+        asset.file_format = new_ext.lstrip('.')
+        fixed += 1
+
+    if fixed:
+        db.commit()
+
+    return fixed, errors
 
 
 def migrate_media_paths_to_relative(db: Session) -> int:
