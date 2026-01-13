@@ -51,7 +51,7 @@ def get_or_create_job_from_share(db: Session, share_text: str, share_url: str) -
     # Check for existing active jobs (pending or processing)
     job = db.query(Job).filter(
         Job.share_url == share_url,
-        Job.status.in_([JobStatus.pending, JobStatus.processing])
+        Job.status.in_([JobStatus.pending, JobStatus.processing, JobStatus.completed])  # TODO: Should we allow completed jobs to be re-queued?
     ).first()
     
     if job:
