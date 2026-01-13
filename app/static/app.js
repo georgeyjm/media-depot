@@ -656,7 +656,7 @@ async function loadPlatforms() {
         platforms.forEach((p) => {
             const opt = document.createElement('option');
             opt.value = p.name;
-            opt.textContent = p.name.charAt(0).toUpperCase() + p.name.slice(1);
+            opt.textContent = p.display_name;
             platformFilter.appendChild(opt);
         });
     } catch (err) {
@@ -748,8 +748,8 @@ function renderPosts() {
             <div class="post-info">
                 <div class="post-card-title">${escapeHtml(displayTitle)}</div>
                 <div class="post-meta">
-                    <span class="platform-badge">${post.platform.name}</span>
-                    <span>@${escapeHtml(post.creator.username || post.creator.display_name || 'Unknown')}</span>
+                    <span class="platform-badge">${post.platform.display_name}</span>
+                    <span>@${escapeHtml(post.creator.display_name || post.creator.username || 'Unknown')}</span>
                 </div>
             </div>
         </div>
@@ -921,7 +921,7 @@ function renderCurrentMedia() {
             <div class="live-photo-container">
                 <img class="live-photo-image" src="${mediaPath}" alt="${escapeHtml(post.title || 'Media')}">
                 <video class="live-photo-video" src="${videoPath}" loop muted playsinline></video>
-                <div class="live-photo-icon" title="Live Photo - Hover to play">
+                <div class="live-photo-icon">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
                         <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/>
                         <circle cx="12" cy="12" r="4"/>

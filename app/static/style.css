@@ -402,6 +402,9 @@ input, textarea, select {
     gap: 8px;
     font-size: 0.8rem;
     color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .post-meta .platform-badge {
@@ -483,6 +486,10 @@ input, textarea, select {
     gap: 4px;
 }
 
+#clear-all-tasks-btn.icon-btn:hover {
+    color: var(--error);
+}
+
 .icon-btn {
     width: 32px;
     height: 32px;
@@ -555,8 +562,8 @@ input, textarea, select {
 }
 
 .task-delete-btn:hover {
-    background: var(--error);
-    border-color: var(--error);
+    background: var(--accent);
+    border-color: var(--accent);
     color: white;
 }
 
@@ -756,6 +763,7 @@ input, textarea, select {
     max-height: 80vh;
     object-fit: contain;
     border-radius: var(--radius-md);
+    transition: opacity var(--transition-normal) ease;
 }
 
 .live-photo-container .live-photo-video {
@@ -766,7 +774,6 @@ input, textarea, select {
     height: 100%;
     opacity: 0;
     pointer-events: none;
-    transition: opacity var(--transition-fast) ease;
 }
 
 .live-photo-container.playing .live-photo-video {
@@ -774,7 +781,8 @@ input, textarea, select {
 }
 
 .live-photo-container.playing .live-photo-image {
-    opacity: 0;
+    /* No need as long as video is above image */
+    /* opacity: 0; */
 }
 
 .live-photo-icon {
@@ -783,13 +791,12 @@ input, textarea, select {
     left: 16px;
     width: 36px;
     height: 36px;
-    background: rgba(0, 0, 0, 0.5);
+    background: rgba(0, 0, 0, 0.4);
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
     color: white;
-    cursor: pointer;
     transition: all var(--transition-fast) ease;
     z-index: 10;
 }
