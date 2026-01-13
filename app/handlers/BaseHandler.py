@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models import Platform, MediaAsset
 from app.models.enums import PostType
+from app.utils.download import get_all_cookies
 
 
 class BaseHandler(ABC):
@@ -20,18 +21,24 @@ class BaseHandler(ABC):
     FULL_URL_PATTERNS: ClassVar[tuple[str, ...]] = ()
     SHORT_URL_PATTERNS: ClassVar[tuple[str, ...]] = ()
     CREATOR_URL_PATTERN: ClassVar[str] = ''
+    USE_COOKIES: ClassVar[bool] = False
     # Set during initialization
     PLATFORM: ClassVar[Optional[Platform]] = None
     DOWNLOAD_DIR: ClassVar[Optional[Path]] = None
 
     def __init__(self):
+        cookies = None
+        if self.USE_COOKIES:
+            cookies = get_all_cookies()
+        
         self.client = httpx.Client(
             headers={
                 # 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
                 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1 Edg/143.0.0.0'
             },
+            cookies=cookies,
             follow_redirects=True,
-            timeout=15.0,
+            timeout=20.0,
         )
         # Instance state for cached page content
         self._current_url: Optional[str] = None

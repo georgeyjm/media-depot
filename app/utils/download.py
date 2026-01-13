@@ -125,50 +125,20 @@ def _get_cookie_file() -> Optional[Path]:
     return None
 
 
-def _get_cookies(url: str) -> dict[str, str]:
+def get_all_cookies() -> httpx.Cookies:
     '''
-    Get cookies for a given URL.
-    
-    Args:
-        url: The URL to get cookies for.
-    
-    Returns:
-        A dictionary of cookies.
+    Get all cookies from the cookie file and return them in httpx.Cookies format.
     '''
-    # Prepare cookies if needed
     cookie_file = _get_cookie_file()
-    if cookie_file and cookie_file.exists():
-        # Load cookies from file
-        cookie_jar = MozillaCookieJar()
-        cookie_jar.load(cookie_file, ignore_discard=True, ignore_expires=True)
-        
-        # Filter cookies by domain to only include relevant cookies
-        parsed_url = urlparse(url)
-        request_domain = parsed_url.netloc.lower()
-        # Remove port if present
-        if ':' in request_domain:
-            request_domain = request_domain.split(':')[0]
-        
-        # Filter cookies that match the request domain
-        filtered_cookies = {}
-        for cookie in cookie_jar:
-            cookie_domain = cookie.domain.lower()
-            
-            # Check if cookie matches the request domain
-            # Domain cookies (starting with '.') match the domain and all subdomains
-            if cookie_domain.startswith('.'):
-                # Remove leading dot for comparison
-                base_domain = cookie_domain[1:]
-                # Match exact domain or subdomains
-                if request_domain == base_domain or request_domain.endswith('.' + base_domain):
-                    filtered_cookies[cookie.name] = cookie.value
-            else:
-                # Non-domain cookies only match exact domain
-                if request_domain == cookie_domain:
-                    filtered_cookies[cookie.name] = cookie.value
-        
-        cookies = filtered_cookies if filtered_cookies else None
-        return cookies
+    if not (cookie_file and cookie_file.exists()):
+        return None
+    
+    cookie_jar = MozillaCookieJar()
+    cookie_jar.load(cookie_file, ignore_discard=True, ignore_expires=True)
+    cookies = httpx.Cookies()
+    for cookie in cookie_jar:
+        cookies.set(cookie.name, cookie.value, domain=cookie.domain, path=cookie.path)
+    return cookies
 
 
 def _get_valid_extensions(format: str) -> list[str]:
@@ -423,10 +393,9 @@ def download_file(
     }
     if headers:
         request_headers.update(headers)
+    cookies = None
     if use_cookies:
-        cookies = _get_cookies(url)
-    else:
-        cookies = None
+        cookies = get_all_cookies()
     
     # Default timeout is 60s, but for large files we should use at least 600s (10 minutes)
     httpx_timeout = httpx.Timeout(

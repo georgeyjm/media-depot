@@ -25,7 +25,7 @@ class XhsHandler(BaseHandler):
     SHORT_URL_PATTERNS = (
         r'https?://xhslink\.com/[a-zA-Z]/[a-zA-Z0-9]+/?',  # Share URL
     )
-    # CREATOR_URL_PATTERN = r'(?:https?:)?//space\.bilibili\.com/(\d+)'
+    USE_COOKIES = True
     API_ROOT = f'http://localhost:{settings.XHS_DOWNLOADER_PORT}'
     XHS_PHOTO_ROOT = 'https://ci.xiaohongshu.com/'
     XHS_VIDEO_ROOT = 'https://sns-video-bd.xhscdn.com/'
