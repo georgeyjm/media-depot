@@ -456,8 +456,8 @@ def download_file(
                     if expected_size is None:
                         expected_size = response.headers.get('Content-Length')
             except Exception as e:
-                print('Failed to GET url: {url}: {e}')
-                print('Current info: {filename}, {extension}, {expected_size}')
+                print(f'Failed to GET url: {url}: {e}')
+                print(f'Current info: {filename}, {extension}, {expected_size}')
                 raise
         
         # Determine final file name and path

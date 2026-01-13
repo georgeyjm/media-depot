@@ -138,6 +138,11 @@ class XhsHandler(BaseHandler):
         #     pass
         
         if 'xiaohongshu.com/404/' in self._resolved_url:
+            # This doesn't actually mean the post is non-existent,
+            # but Xhs does not allow web access to these posts
+            # TODO: Need to find a workaround, or at least mark it.
+            return None
+        if self._resolved_url.endswith('xiaohongshu.com') or self._resolved_url.endswith('xiaohongshu.com/explore'):
             # Post is non-existent
             return None
         
@@ -152,6 +157,8 @@ class XhsHandler(BaseHandler):
                 note_data = json.loads(js_string)
                 note_data = note_data['noteData']['data']['noteData']
             except (json.JSONDecodeError, KeyError, TypeError) as e:
+                print(self._resolved_url)
+                print(js_string)
                 raise ValueError('Failed to parse JavaScript data') from e
         else:
             raise ValueError('Failed to find JavaScript data')

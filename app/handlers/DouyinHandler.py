@@ -38,6 +38,9 @@ class DouyinHandler(BaseHandler):
             if match := re.match(pattern, self._resolved_url):
                 break
         else:
+            if 'webcast.amemv.com/douyin/' in self._resolved_url:
+                # Douyin livestream are not supported yet
+                return None
             raise ValueError(f'Cannot process Douyin URL: {self._resolved_url}')
         platform_post_type, platform_post_id = match.group(1, 2)
         
