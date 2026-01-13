@@ -36,7 +36,7 @@ def sanitize_filename(filename: str) -> str:
 
     Removes characters that are:
     - Unsafe for filesystems: < > : " / \\ | ? *
-    - Unsafe for URLs: # % & + = ; @ ! $ ' ( ) ,
+    - Unsafe for URLs: # % & + = ; @ ! $ ' ( ) , \n
 
     Args:
         filename: The filename to sanitize
@@ -44,4 +44,4 @@ def sanitize_filename(filename: str) -> str:
     Returns:
         The sanitized filename
     '''
-    return re.sub(r'[<>:"/\\|?*#%&+=;@!$\'(),]', '_', filename)
+    return re.sub(r'[<>:"/\\|?*#%&+=;@!$\'(),\n]', '_', filename)

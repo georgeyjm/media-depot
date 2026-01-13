@@ -98,7 +98,7 @@ def sanitize_media_filenames(db: Session) -> tuple[int, list[str]]:
         Tuple of (number of files renamed, list of error messages).
     '''
     # Pattern matching URL-unsafe characters (same as in sanitize_filename)
-    URL_UNSAFE_PATTERN = re.compile(r'[<>:"/\\|?*#%&+=;@!$\'(),]')
+    URL_UNSAFE_PATTERN = re.compile(r'[<>:"/\\|?*#%&+=;@!$\'(),\n]')
     
     renamed = 0
     errors = []
@@ -106,7 +106,11 @@ def sanitize_media_filenames(db: Session) -> tuple[int, list[str]]:
 
     for asset in media_assets:
         relative_path = Path(asset.file_path)
+        absolute_path = to_absolute_media_path(relative_path)
         filename = relative_path.name
+        if not absolute_path.exists():
+            print(f'File not found: {absolute_path}')
+            continue
 
         # Check if filename contains URL-unsafe characters
         if not URL_UNSAFE_PATTERN.search(filename):
