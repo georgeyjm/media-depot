@@ -477,14 +477,19 @@ def download_file(
         
         # Determine filename and extension by making a GET request
         if not filename or not extension or not expected_size:
-            with client.stream('GET', url, headers=request_headers) as response:
-                response.raise_for_status()
-                if filename is None:
-                    filename = _determine_filename(response)
-                if extension is None:
-                    extension = _determine_file_extension(response, extension_fallback)
-                if expected_size is None:
-                    expected_size = response.headers.get('Content-Length')
+            try:
+                with client.stream('GET', url, headers=request_headers) as response:
+                    response.raise_for_status()
+                    if filename is None:
+                        filename = _determine_filename(response)
+                    if extension is None:
+                        extension = _determine_file_extension(response, extension_fallback)
+                    if expected_size is None:
+                        expected_size = response.headers.get('Content-Length')
+            except Exception as e:
+                print('Failed to GET url: {url}: {e}')
+                print('Current info: {filename}, {extension}, {expected_size}')
+                raise
         
         # Determine final file name and path
         final_filename = sanitize_filename(filename + extension)
