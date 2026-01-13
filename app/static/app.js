@@ -920,7 +920,7 @@ function renderCurrentMedia() {
         elements.mediaViewer.innerHTML = `
             <div class="live-photo-container">
                 <img class="live-photo-image" src="${mediaPath}" alt="${escapeHtml(post.title || 'Media')}">
-                <video class="live-photo-video" src="${videoPath}" loop muted playsinline></video>
+                <video class="live-photo-video" src="${videoPath}" loop playsinline></video>
                 <div class="live-photo-icon">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
                         <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/>
@@ -1055,7 +1055,8 @@ function hideThumbnailPreview() {
 // ===== Storage =====
 function saveTasksToStorage() {
     // Only keep last 50 tasks
-    const tasksToSave = state.tasks.slice(0, 50);
+    const tasksToSave = state.tasks; //.slice(0, 50);
+
     localStorage.setItem('tasks', JSON.stringify(tasksToSave));
 }
 
