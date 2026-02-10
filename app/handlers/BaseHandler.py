@@ -8,8 +8,9 @@ from bs4 import BeautifulSoup
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models import Platform, MediaAsset
+from app.models import Platform, Post, PostMedia
 from app.models.enums import PostType
+from app.schemas import PostInfo
 from app.utils.download import get_all_cookies
 
 
@@ -173,12 +174,12 @@ class BaseHandler(ABC):
         pass
 
     @abstractmethod
-    def extract_info(self, url: str, html: str, share_url: Optional[str]) -> dict[str, Any]:
+    def extract_info(self) -> PostInfo | None:
         '''Platform-specific implementation of extract_info.'''
         pass
 
     @abstractmethod
-    def extract_media_urls(self, url: str) -> list[dict[str, Any]]:
+    def extract_media_urls(self) -> list[dict[str, Any]]:
         '''Extract all media URLs from the post.
         
         Args:
@@ -190,7 +191,7 @@ class BaseHandler(ABC):
         pass
 
     @abstractmethod
-    def download(self) -> list[MediaAsset]:
+    def download(self, db: Session, post: Post) -> list[PostMedia]:
         '''Download all media from the post.'''
         pass
     

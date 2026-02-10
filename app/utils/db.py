@@ -295,7 +295,7 @@ def download_media_asset_from_urls(
     filename: Optional[str] = None,
     commit: bool = True,
     **kwargs: Any,
-) -> list[MediaAsset]:
+) -> MediaAsset:
     '''
     Download and create a single MediaAsset from a list of possible URLs.
     '''

@@ -74,7 +74,10 @@ class InsHandler(BaseHandler):
 
         # Fallback based on URL pattern
         if not post_type_string:
+            assert self._resolved_url is not None, 'Page is not loaded yet'
             match = re.match(self.FULL_URL_PATTERNS[0], self._resolved_url)
+            if not match:
+                raise ValueError(f'Cannot process Instagram URL: {self._resolved_url}')
             post_type_string = match.group(1)
         if post_type_string in ('reel', 'reels', 'tv'):
             return PostType.video
@@ -98,7 +101,10 @@ class InsHandler(BaseHandler):
             print('No data returned from gallery-dl')
             return None
         
-        post_type_string, shortcode = re.match(self.FULL_URL_PATTERNS[0], self._resolved_url).groups()
+        url_match = re.match(self.FULL_URL_PATTERNS[0], self._resolved_url)
+        if not url_match:
+            raise ValueError(f'Cannot process Instagram URL: {self._resolved_url}')
+        post_type_string, shortcode = url_match.groups()
         post_type = self.get_post_type(post_type_string)
 
         # Process extracted data
@@ -205,6 +211,7 @@ class InsHandler(BaseHandler):
         filename_template = f'{filename_prefix}_{{num}}.{{extension}}'
 
         # Download using gallery-dl
+        assert self.DOWNLOAD_DIR is not None, 'Download directory is not set'
         downloaded_files = download_gallery_dl(
             url=self._resolved_url,
             download_dir=self.DOWNLOAD_DIR,

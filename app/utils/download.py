@@ -63,10 +63,10 @@ def _extract_and_save_cookies(cookie_file: Path) -> bool:
                 cookie_file.parent.mkdir(parents=True, exist_ok=True)
                 # Save cookies in Netscape format
                 if isinstance(ydl.cookiejar, MozillaCookieJar):
-                    ydl.cookiejar.save(cookie_file, ignore_discard=True, ignore_expires=True)
+                    ydl.cookiejar.save(str(cookie_file), ignore_discard=True, ignore_expires=True)
                 else:
                     # If it's a different type, convert to MozillaCookieJar
-                    mozilla_jar = MozillaCookieJar(cookie_file)
+                    mozilla_jar = MozillaCookieJar(str(cookie_file))
                     for cookie in ydl.cookiejar:
                         mozilla_jar.set_cookie(cookie)
                     mozilla_jar.save(ignore_discard=True, ignore_expires=True)
@@ -127,7 +127,7 @@ def _get_cookie_file() -> Optional[Path]:
     return None
 
 
-def get_all_cookies() -> httpx.Cookies:
+def get_all_cookies() -> httpx.Cookies | None:
     '''
     Get all cookies from the cookie file and return them in httpx.Cookies format.
     '''
@@ -136,10 +136,10 @@ def get_all_cookies() -> httpx.Cookies:
         return None
     
     cookie_jar = MozillaCookieJar()
-    cookie_jar.load(cookie_file, ignore_discard=True, ignore_expires=True)
+    cookie_jar.load(str(cookie_file), ignore_discard=True, ignore_expires=True)
     cookies = httpx.Cookies()
     for cookie in cookie_jar:
-        cookies.set(cookie.name, cookie.value, domain=cookie.domain, path=cookie.path)
+        cookies.set(cookie.name, cookie.value or '', domain=cookie.domain, path=cookie.path)
     return cookies
 
 
@@ -322,7 +322,7 @@ def download_gallery_dl(
     if extra_options:
         for key, value in extra_options.items():
             if isinstance(key, tuple):
-                gdl_config.set(key, value)
+                gdl_config.set(key[:-1], key[-1], value)
             else:
                 # Assume it's an extractor-level option
                 if extractor:

@@ -56,6 +56,8 @@ def process_download_job(job_id: int) -> None:
             return
         
         # Get or create the post, and link job to post
+        if handler.PLATFORM is None:
+            raise ValueError(f'Handler {handler.__class__.__name__} does not have PLATFORM set')
         post = get_or_create_post_by_platform_info(db=db, platform=handler.PLATFORM, post_info=post_info)
         job.post_id = post.id
         db.commit()

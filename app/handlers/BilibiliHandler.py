@@ -40,6 +40,7 @@ class BilibiliHandler(BaseHandler):
     
     def extract_info(self) -> PostInfo | None:
         '''Extract post metadata and information.'''
+        assert self._resolved_url is not None and self._html is not None, 'Page is not loaded yet'
         if not self._soup:
             self._soup = BeautifulSoup(self._html, 'html.parser')
         
@@ -50,7 +51,13 @@ class BilibiliHandler(BaseHandler):
         # Extract video-related info
         url = remove_query_params(self._resolved_url)
         post_type = self.get_post_type()
-        platform_post_id = re.match(self.FULL_URL_PATTERNS[0], self._resolved_url).group(1)
+        url_match = re.match(self.FULL_URL_PATTERNS[0], self._resolved_url)
+        if not url_match:
+            if self._resolved_url == self._current_url:
+                return None  # Video is deleted, so no redirect is performed
+            else:
+                raise ValueError(f'Cannot process Bilibili URL: {self._resolved_url}')
+        platform_post_id = url_match.group(1)
         share_url = self._current_url
         title = None
         if el := self._soup.select_one('#viewbox_report > .video-info-title h1'):
@@ -75,7 +82,10 @@ class BilibiliHandler(BaseHandler):
                 raise ValueError('Cannot locate creator name.')
             creator_name = creator_name_el.text.strip()
             creator_url = remove_query_params(creator_name_el.get('href'))
-            creator_platform_id = re.search(self.CREATOR_URL_PATTERN, creator_url).group(1)
+            url_match = re.search(self.CREATOR_URL_PATTERN, creator_url)
+            if not url_match:
+                raise ValueError(f'Cannot process Bilibili creator URL: {creator_url}')
+            creator_platform_id = url_match.group(1)
             # profile_pic_url = creator_el.select_one('.up-avatar > .bili-avatar > img.bili-avatar-img').get('src').split('@')[0]
         else:
             # Post with multiple creators, only take the first one
@@ -86,8 +96,13 @@ class BilibiliHandler(BaseHandler):
             if creator_info_el is None:
                 raise ValueError('Cannot find creator information.')
             creator_name = creator_info_el.text.strip()
-            creator_url = creator_el.select_one('.staff-info > a').get('href')
-            creator_platform_id = re.search(self.CREATOR_URL_PATTERN, creator_url).group(1)
+            creator_url_el = creator_el.select_one('.staff-info > a')
+            assert creator_url_el is not None, 'Cannot find creator URL.'
+            creator_url = creator_url_el.get('href', '')
+            creator_url_match = re.match(self.CREATOR_URL_PATTERN, creator_url)
+            if not creator_url_match:
+                raise ValueError(f'Cannot process Bilibili creator URL: {creator_url}')
+            creator_platform_id = creator_url_match.group(1)
             # profile_pic_url = creator_el.select_one('.avatar-img > img').get('src').split('@')[0]
         profile_pic_url = re.search(r'"upData":\s*{[^}]+?"face":\s*"(.+?)"', self._html)
         if profile_pic_url is not None:
@@ -135,6 +150,7 @@ class BilibiliHandler(BaseHandler):
         
         # TODO: Use post.url or share_url? When to add URL?
         try:
+            assert self.DOWNLOAD_DIR is not None, 'Download directory is not set'
             filepath = download_yt_dlp(url=post.url, download_dir=self.DOWNLOAD_DIR)
         except Exception as e:
             raise

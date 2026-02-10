@@ -34,6 +34,8 @@ class DouyinHandler(BaseHandler):
     
     def extract_info(self) -> PostInfo | None:
         '''Extract post metadata and information.'''
+        assert self._resolved_url is not None, 'Page is not loaded yet'
+
         for pattern in self.FULL_URL_PATTERNS:
             if match := re.match(pattern, self._resolved_url):
                 break
@@ -142,10 +144,11 @@ class DouyinHandler(BaseHandler):
         
         post_medias = []
         max_caption_length = 25
-        if post.caption_text.startswith('#'):
-            filename_prefix = f'[{post.platform_post_id}] {post.caption_text[:max_caption_length].strip()}'
+        caption_text = post.caption_text or ''
+        if caption_text.startswith('#'):
+            filename_prefix = f'[{post.platform_post_id}] {caption_text[:max_caption_length].strip()}'
         else:
-            filename_prefix = f'[{post.platform_post_id}] {post.caption_text.split('#')[0][:max_caption_length].strip()}'
+            filename_prefix = f'[{post.platform_post_id}] {caption_text.split('#')[0][:max_caption_length].strip()}'
 
         if post.post_type == PostType.carousel:
             if not self._images_data:

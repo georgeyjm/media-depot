@@ -31,14 +31,16 @@ class XhsHandler(BaseHandler):
     XHS_VIDEO_ROOT = 'https://sns-video-bd.xhscdn.com/'
 
     def extract_media_urls(self, post_type: PostType) -> list[str]:
+        assert self._html is not None, 'Page is not loaded yet'
         if post_type == PostType.video:
             match = re.search(r'"consumer":\s*{.*?"originVideoKey":\s*"(.+?)"\s*}', self._html)
+            if not match:
+                raise ValueError(f'Origin video URL not found in HTML: {self._html}')
             if match:
                 url = self.XHS_VIDEO_ROOT + unescape_unicode(match.group(1))
                 return [url]
             print(f'Origin video URL not found in HTML: {self._html}')
-        else:
-            return []
+        return []
     
     def get_post_type(self) -> PostType:
         # TODO: Maybe remove
@@ -46,6 +48,8 @@ class XhsHandler(BaseHandler):
     
     def extract_info_by_api(self) -> PostInfo | None:
         '''Extract post metadata and information using third-party API.'''
+        assert self._resolved_url is not None and self._html is not None, 'Page is not loaded yet'
+        
         try:
             api_response = self.client.post(
                 f'{self.API_ROOT}/xhs/detail',
@@ -137,6 +141,8 @@ class XhsHandler(BaseHandler):
         #     print('Failed to extract info by API:', e)
         #     pass
         
+        assert self._resolved_url is not None and self._html is not None, 'Page is not loaded yet'
+
         if 'xiaohongshu.com/404/' in self._resolved_url:
             # This doesn't actually mean the post is non-existent,
             # but Xhs does not allow web access to these posts
@@ -255,7 +261,8 @@ class XhsHandler(BaseHandler):
         
         post_medias = []
         max_caption_length = 25
-        filename_prefix = f'[{post.platform_post_id}] {post.title[:max_caption_length].strip()}'
+        title = post.title or post.caption_text or ''
+        filename_prefix = f'[{post.platform_post_id}] {title[:max_caption_length].strip()}'
 
         if post.post_type == PostType.video:
             media_asset = download_media_asset_from_url(
