@@ -49,3 +49,4 @@ docker compose up --scale worker=4
 
 - Better cookie handling (browser cookies cannot be accessed inside Docker)
 - Better post error handling (non-existent/deleted posts)
+- Right now, when thumbnail file has the same checksum as a post media asset, we delete/ignore the post media asset (because it is downloaded later than the thumbnail). However, I want to prioritize post media assets over thumbnails.

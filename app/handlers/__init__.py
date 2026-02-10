@@ -6,7 +6,7 @@ from app.handlers.BaseHandler import BaseHandler
 from app.handlers.BilibiliHandler import BilibiliHandler
 from app.handlers.DouyinHandler import DouyinHandler
 from app.handlers.XhsHandler import XhsHandler
-# from app.handlers.YoutubeHandler import YoutubeHandler
+from app.handlers.InsHandler import InsHandler
 
 
 # List of all available handler classes
@@ -14,7 +14,7 @@ HANDLERS: list[Type[BaseHandler]] = [
     BilibiliHandler,
     DouyinHandler,
     XhsHandler,
-    # YoutubeHandler,
+    InsHandler,
 ]
 
 
@@ -71,6 +71,7 @@ __all__ = [
     'BilibiliHandler',
     'DouyinHandler',
     'XhsHandler',
+    'InsHandler',
     'HANDLERS',
     'get_handler_from_share',
     'extract_url_from_share',

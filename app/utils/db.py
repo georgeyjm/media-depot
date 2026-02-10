@@ -173,7 +173,7 @@ def create_post(db: Session, platform: Platform, post_info: PostInfo, download_t
         # Race condition: another worker created the post between our query and insert
         # Roll back the failed insert and query again
         db.rollback()
-        post = get_post(db=db, platform=platform, post_info=post_info)
+        post = get_post_by_platform_info(db=db, platform=platform, post_info=post_info)
         if not post:
             # This should never happen, but re-raise if it does
             raise
