@@ -11,6 +11,8 @@ from mimetypes import guess_extension
 import httpx
 import magic
 from yt_dlp import YoutubeDL
+from gallery_dl import config as gdl_config
+from gallery_dl.job import DownloadJob
 
 from app.config import settings
 from app.utils.helpers import sanitize_filename
@@ -242,6 +244,7 @@ def download_yt_dlp(
     Returns:
         Path: The path to the downloaded video.
     '''
+    # TODO: Multiple videos?
     cookie_file = _get_cookie_file()
     ydl_options = {
         'paths': {'home': str(download_dir)},  # Note yt_dlp will create the download_dir directory if it doesn't exist
@@ -255,6 +258,84 @@ def download_yt_dlp(
         info = ydl.extract_info(url, download=True)
         file_path = ydl.prepare_filename(info)
     return Path(file_path)
+
+
+class _GalleryDlPathCollector:
+    '''
+    gallery-dl does not return downloaded file paths
+    So we use duck-typing to replace job.out with this custom Collector
+    '''
+    def __init__(self):
+        self.paths: list[Path] = []
+
+    def success(self, path):
+        self.paths.append(Path(path))
+
+    def skip(self, path):
+        pass
+
+    def start(self, path):
+        pass
+
+
+def download_gallery_dl(
+    url: str,
+    download_dir: Path = settings.MEDIA_ROOT_DIR,
+    filename: Optional[str] = None,
+    extractor: Optional[str] = None,
+    extra_options: Optional[dict[str, Any]] = None,
+) -> list[Path]:
+    '''
+    Download media using gallery-dl.
+
+    Args:
+        url: The URL to download from.
+        download_dir: The directory to download files to.
+        filename: Optional filename template (gallery-dl format, e.g., '{post_shortcode}_{num}.{extension}').
+        extractor: Optional extractor name (e.g., 'instagram', 'twitter') for extractor-specific config.
+        extra_options: Extra options to pass to gallery-dl config.
+
+    Returns:
+        list[Path]: List of paths to downloaded files.
+    '''
+    gdl_config.load()
+
+    cookie_file = _get_cookie_file()
+    if cookie_file:
+        gdl_config.set(('extractor',), 'cookies', str(cookie_file))
+        if extractor:
+            gdl_config.set(('extractor', extractor), 'cookies', str(cookie_file))
+
+    # Configure base download directory
+    gdl_config.set(('extractor',), 'base-directory', str(download_dir))
+    # Disable subdirectory creation
+    gdl_config.set(('extractor',), 'directory', [])
+
+    # Set filename template if provided
+    if filename:
+        if extractor:
+            gdl_config.set(('extractor', extractor), 'filename', filename)
+        else:
+            gdl_config.set(('extractor',), 'filename', filename)
+
+    # Apply extra options
+    if extra_options:
+        for key, value in extra_options.items():
+            if isinstance(key, tuple):
+                gdl_config.set(key, value)
+            else:
+                # Assume it's an extractor-level option
+                if extractor:
+                    gdl_config.set(('extractor', extractor), key, value)
+                else:
+                    gdl_config.set(('extractor',), key, value)
+
+    # Run download with custom output handler
+    job = DownloadJob(url)
+    job.out = _GalleryDlPathCollector()
+    job.run()
+
+    return job.out.paths
 
 
 def _determine_file_extension(response: httpx.Response, fallback: Optional[str] = None) -> str:
