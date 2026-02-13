@@ -15,6 +15,7 @@ from gallery_dl import config as gdl_config
 from gallery_dl.job import DownloadJob
 
 from app.config import settings
+from app.models.enums import UserAgent
 from app.utils.helpers import sanitize_filename
 
 
@@ -467,9 +468,9 @@ def download_file(
     '''
     # Prepare request headers and cookies
     request_headers = {
-        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1 Edg/143.0.0.0',
+        'User-Agent': UserAgent.MAC_EDGE,
         'Accept': '*/*',
-        'Accept-Encoding': 'identity',
+        'Accept-Encoding': 'gzip, deflate',  # Universal support; XHS CDN rejects identity/br/zstd
         'Connection': 'keep-alive',
     }
     if headers:
@@ -510,7 +511,7 @@ def download_file(
                     filename = _determine_filename(test_response)
                 extension = _determine_file_extension(test_response, extension_fallback)
                 expected_size = test_response.headers.get('Content-Length')  # TODO: Check this when download is finished
-        except (httpx.HTTPStatusError, httpx.RequestError):
+        except (httpx.HTTPStatusError, httpx.RequestError) as e:
             # HEAD not supported or failed, we'll determine from GET response with Range header
             try:
                 test_response = client.get(url, headers={'Range': 'bytes=0-0', **request_headers}, follow_redirects=True)
@@ -522,7 +523,7 @@ def download_file(
                         extension = _determine_file_extension(test_response, extension_fallback)
                     if content_range := test_response.headers.get('Content-Range'):
                         expected_size = int(content_range.split('/')[-1])
-            except Exception:
+            except Exception as e:
                 pass
         
         # Determine filename and extension by making a GET request

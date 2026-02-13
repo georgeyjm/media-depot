@@ -7,7 +7,7 @@ from bs4 import BeautifulSoup
 from app.handlers import BaseHandler
 from app.db import Session
 from app.models import Post, PostMedia
-from app.models.enums import PostType, MediaType
+from app.models.enums import PostType, MediaType, UserAgent
 from app.schemas import PostInfo, MediaAssetCreate
 from app.utils.db import get_or_create_media_asset, link_post_media_asset
 from app.utils.download import download_yt_dlp
@@ -29,7 +29,7 @@ class BilibiliHandler(BaseHandler):
 
     def __init__(self):
         super().__init__()
-        self.client.headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        self.client.headers['User-Agent'] = UserAgent.MAC_EDGE
 
     def extract_media_urls(self) -> list[str]:
         raise NotImplementedError

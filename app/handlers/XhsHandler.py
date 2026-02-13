@@ -2,16 +2,18 @@ import re
 import json
 from datetime import datetime
 
+import httpx
 from bs4 import BeautifulSoup
 
 from app.config import settings
 from app.handlers import BaseHandler
 from app.db import Session
 from app.models import Post, PostMedia
-from app.models.enums import PostType, MediaType
+from app.models.enums import PostType, MediaType, UserAgent
 from app.schemas.post import PostInfo
 from app.utils.db import download_media_asset_from_url, link_post_media_asset
 from app.utils.helpers import remove_query_params, unescape_unicode
+from app.utils.download import get_all_cookies
 
 
 class XhsHandler(BaseHandler):
@@ -42,17 +44,49 @@ class XhsHandler(BaseHandler):
             print(f'Origin video URL not found in HTML: {self._html}')
         return []
 
-    def extract_media_urls_non_origin(self, post_type: PostType, note_data: dict) -> list[str]:
+    def extract_media_urls_non_origin(self, post_type: PostType) -> list[str]:
         '''
         Since Xiaohongshu removed "originVideoKey" for videos, we only have access to non-original compressed videos.
         This function extracts those video links.
+        Note that higher quality videos will only show in non-phone devices. Therefore we are making a new request here.
         '''
         assert self._html is not None, 'Page is not loaded yet'
         if post_type == PostType.video:
+            # Make another request using desktop user agent
+            assert self._current_url is not None
+            cookies = get_all_cookies()
+            headers = {'User-Agent': UserAgent.MAC_EDGE}
+            resp = httpx.get(self._current_url, headers=headers, cookies=cookies, follow_redirects=True, timeout=20.0)
+            resp.raise_for_status()
+
+            # Parse for note data (this is duplicate of code below, hence is only a temporary fix, needs refactoring)
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            if el := soup.find('script', string=re.compile(r'window\.__INITIAL_STATE__=')):  # type: ignore
+                # Parse JavaScript data
+                js_string = el.string[len('window.__INITIAL_STATE__='):]
+                js_string = re.sub(r'\bundefined\b', 'null', js_string)
+                js_string = re.sub(r'\bNaN\b|\bInfinity\b', 'null', js_string)
+                try:
+                    note_data = json.loads(js_string)
+                    if 'noteData' in note_data:
+                        # Using iOS Safari user agent
+                        note_data = note_data['noteData']['data']['noteData']
+                    else:
+                        # Using Web Chrome user agent
+                        note_data = list(note_data['note']['noteDetailMap'].values())[0]['note']
+                except (json.JSONDecodeError, KeyError, TypeError) as e:
+                    print(self._resolved_url)
+                    print(js_string)
+                    raise ValueError('Failed to parse JavaScript data') from e
+            else:
+                raise ValueError('Failed to find JavaScript data')
+
+            # Extract video URL
             assert 'video' in note_data and 'media' in note_data['video'], f'Missing video keys in note data: {note_data}'
             media_data = note_data['video']['media']
-            url = unescape_unicode(self._get_max_quality_video_url(media_data))
+            url = self._get_max_quality_video_url(media_data)
             return [url]
+        
         return []
     
     def _get_max_quality_video_url(self, media_data: dict) -> str:
@@ -67,12 +101,12 @@ class XhsHandler(BaseHandler):
         else:
             raise ValueError('Cannot find any valid encoding')
         
-        stream = max(streams, key=lambda s: s.get('videoBitrate', 0))  # Alternative: 'avgBitrate', 'height'/'width'
+        stream = max(streams, key=lambda s: s.get('videoBitrate', 0))  # Alternatives: 'avgBitrate', 'height'/'width'
         # In the future, we can return all URLs for fallback purposes
         url = stream.get('masterUrl') or stream.get('backupUrls', [])[0]
         if not url:
             raise ValueError(f'Cannot find a valid URL in {stream}')
-        return url
+        return unescape_unicode(url)
     
     def get_post_type(self, post_type_string: str) -> PostType:
         return {
@@ -84,6 +118,126 @@ class XhsHandler(BaseHandler):
             '图文': PostType.carousel,
             '视频': PostType.video,
         }.get(post_type_string.lower(), PostType.unknown)
+    
+    def extract_info(self) -> PostInfo | None:
+        '''Extract post metadata and information.'''
+        assert self._resolved_url is not None and self._html is not None, 'Page is not loaded yet'
+
+        if 'xiaohongshu.com/404/' in self._resolved_url:
+            # This doesn't actually mean the post is non-existent,
+            # but Xhs does not allow web access to these posts
+            # TODO: Need to find a workaround, or at least mark it.
+            return None
+        if self._resolved_url.endswith('xiaohongshu.com') or self._resolved_url.endswith('xiaohongshu.com/explore'):
+            # Post is non-existent
+            return None
+        
+        if self._soup is None:
+            self._soup = BeautifulSoup(self._html, 'html.parser')
+        if el := self._soup.find('script', string=re.compile(r'window\.__INITIAL_STATE__=')):  # type: ignore
+            # Parse JavaScript data
+            js_string = el.string[len('window.__INITIAL_STATE__='):]
+            js_string = re.sub(r'\bundefined\b', 'null', js_string)
+            js_string = re.sub(r'\bNaN\b|\bInfinity\b', 'null', js_string)
+            try:
+                note_data = json.loads(js_string)
+                if 'noteData' in note_data:
+                    # Using iOS Safari user agent
+                    note_data = note_data['noteData']['data']['noteData']
+                else:
+                    # Using Web Chrome user agent
+                    note_data = list(note_data['note']['noteDetailMap'].values())[0]['note']
+            except (json.JSONDecodeError, KeyError, TypeError) as e:
+                print(self._resolved_url)
+                print(js_string)
+                raise ValueError('Failed to parse JavaScript data') from e
+        else:
+            raise ValueError('Failed to find JavaScript data')
+        
+        metadata = {}
+        post_type = self.get_post_type(note_data.get('type'))
+
+        url = self._resolved_url  # We retain xsec_token, unlike: api_data.get('作品链接')
+        platform_post_id = note_data.get('noteId')
+        title = note_data.get('title')
+        caption_text = note_data.get('desc')
+        if caption_text:
+            # Reformat #[话题]# tags
+            caption_text = re.sub(r'(#[^#]+)\[话题\]#', r'\1 ', caption_text)
+        platform_created_at = note_data.get('time') or note_data.get('lastUpdateTime')
+        if platform_created_at:
+            platform_created_at = datetime.fromtimestamp(platform_created_at / 1000)
+            platform_created_at = platform_created_at.astimezone()  # XHS returns time in local timezone
+
+        if not (user_data := note_data.get('user')):
+            raise ValueError('User data not found')
+        creator_platform_id = user_data.get('userId')
+        creator_username = None  # TODO: It's actually surprisingly hard to get this - need to bypass auth and request the user homepage
+        creator_display_name = user_data.get('nickName') or user_data.get('nickname')
+        profile_pic_url = None
+        if avatar_full_url := user_data.get('avatar'):
+            profile_pic_url = remove_query_params(avatar_full_url)
+        thumbnail_url = None
+        if file_id := note_data.get('cover', {}).get('fileId'):
+            thumbnail_url = self.XHS_PHOTO_ROOT + file_id  # No need to unescape_unicode since JSON is already decoded
+        elif first_image := note_data.get('imageList', [{}])[0]:
+            if file_id := first_image.get('fileId'):
+                thumbnail_url = self.XHS_PHOTO_ROOT + file_id
+            elif file_url := first_image.get('urlDefault'):
+                thumbnail_url = file_url
+        elif post_type == PostType.video:
+            file_id = note_data.get('video', {}).get('image', {}).get('firstFrameFileid')  # Note 'thumbnailFileid' contains preview for many frames, is not ideal for thumbnails
+            if file_id:
+                thumbnail_url = self.XHS_PHOTO_ROOT + file_id
+
+        # Extract media links for download
+        if post_type == PostType.video:
+            try:
+                video_url = self.extract_media_urls(post_type)
+                if not video_url:
+                    raise ValueError('Origin video URL not found')
+            except Exception as e:
+                metadata['using_non_origin_video'] = True
+                video_url = self.extract_media_urls_non_origin(post_type)
+            if not video_url:
+                raise ValueError('Video URL not found')
+            self._video_url = video_url[0]
+        elif post_type == PostType.carousel:
+            self._images_data = [], []  # images, (live) videos
+            images_data = note_data.get('imageList')
+            if not images_data:
+                raise ValueError('Image list not found')
+            for image_data in images_data:
+                if file_id := image_data.get('fileId'):
+                    image_url = self.XHS_PHOTO_ROOT + file_id
+                else:
+                    image_url = image_data.get('urlDefault')
+                if not image_url:
+                    print('No valid image URL found in', image_data)
+                    continue
+                self._images_data[0].append(image_url)
+
+                if not image_data.get('livePhoto'):
+                    self._images_data[1].append(None)
+                else:
+                    video_url = self._get_max_quality_video_url(image_data)
+                    self._images_data[1].append(video_url)
+        
+        return PostInfo(
+            platform_post_id=platform_post_id,
+            post_type=post_type,
+            url=url,
+            share_url=self._current_url,
+            title=title,
+            caption_text=caption_text,
+            platform_created_at=platform_created_at,
+            platform_account_id=creator_platform_id,
+            username=creator_username,
+            display_name=creator_display_name,
+            profile_pic_url=profile_pic_url,
+            thumbnail_url=thumbnail_url,
+            metadata=metadata,
+        )
     
     def extract_info_by_api(self) -> PostInfo | None:
         '''Extract post metadata and information using third-party API.'''
@@ -164,126 +318,6 @@ class XhsHandler(BaseHandler):
             display_name=creator_display_name,
             profile_pic_url=profile_pic_url,
             thumbnail_url=thumbnail_url,
-        )
-    
-    def extract_info(self) -> PostInfo | None:
-        '''Extract post metadata and information.'''
-
-        # Try using third-party API to extract post info and download links
-        # try:
-        #     return self.extract_info_by_api()
-        # except Exception as e:
-        #     print('Failed to extract info by API:', e)
-        #     pass
-        
-        assert self._resolved_url is not None and self._html is not None, 'Page is not loaded yet'
-
-        if 'xiaohongshu.com/404/' in self._resolved_url:
-            # This doesn't actually mean the post is non-existent,
-            # but Xhs does not allow web access to these posts
-            # TODO: Need to find a workaround, or at least mark it.
-            return None
-        if self._resolved_url.endswith('xiaohongshu.com') or self._resolved_url.endswith('xiaohongshu.com/explore'):
-            # Post is non-existent
-            return None
-        
-        if self._soup is None:
-            self._soup = BeautifulSoup(self._html, 'html.parser')
-        if el := self._soup.find('script', string=re.compile(r'window\.__INITIAL_STATE__=')):  # type: ignore
-            # Parse JavaScript data
-            js_string = el.string[len('window.__INITIAL_STATE__='):]
-            js_string = re.sub(r'\bundefined\b', 'null', js_string)
-            js_string = re.sub(r'\bNaN\b|\bInfinity\b', 'null', js_string)
-            try:
-                note_data = json.loads(js_string)
-                if 'noteData' in note_data:
-                    # Using iOS Safari user agent
-                    note_data = note_data['noteData']['data']['noteData']
-                else:
-                    # Using Web Chrome user agent
-                    note_data = list(note_data['note']['noteDetailMap'].values())[0]['note']
-            except (json.JSONDecodeError, KeyError, TypeError) as e:
-                print(self._resolved_url)
-                print(js_string)
-                raise ValueError('Failed to parse JavaScript data') from e
-        else:
-            raise ValueError('Failed to find JavaScript data')
-        
-        metadata = {}
-        post_type = self.get_post_type(note_data.get('type'))
-
-        url = self._resolved_url  # We retain xsec_token, unlike: api_data.get('作品链接')
-        platform_post_id = note_data.get('noteId')
-        title = note_data.get('title')
-        caption_text = note_data.get('desc')
-        if caption_text:
-            # Reformat #[话题]# tags
-            caption_text = re.sub(r'(#[^#]+)\[话题\]#', r'\1 ', caption_text)
-        platform_created_at = note_data.get('time') or note_data.get('lastUpdateTime')
-        if platform_created_at:
-            platform_created_at = datetime.fromtimestamp(platform_created_at / 1000)
-            platform_created_at = platform_created_at.astimezone()  # XHS returns time in local timezone
-
-        if not (user_data := note_data.get('user')):
-            raise ValueError('User data not found')
-        creator_platform_id = user_data.get('userId')
-        creator_username = None  # TODO: It's actually surprisingly hard to get this - need to bypass auth and request the user homepage
-        creator_display_name = user_data.get('nickName')
-        profile_pic_url = None
-        if avatar_full_url := user_data.get('avatar'):
-            profile_pic_url = remove_query_params(avatar_full_url)
-        thumbnail_url = None
-        if file_id := note_data.get('cover', {}).get('fileId') or note_data.get('imageList', [{}])[0].get('fileId'):
-            thumbnail_url = self.XHS_PHOTO_ROOT + file_id  # No need to unescape_unicode since JSON is already decoded
-        elif post_type == PostType.video:
-            file_id = note_data.get('video', {}).get('image', {}).get('firstFrameFileid')
-            thumbnail_url = self.XHS_PHOTO_ROOT + file_id
-
-        # Extract media links for download
-        if post_type == PostType.video:
-            try:
-                video_url = self.extract_media_urls(post_type)
-                if not video_url:
-                    raise ValueError('Origin video URL not found')
-            except Exception as e:
-                metadata['using_non_origin_video'] = True
-                video_url = self.extract_media_urls_non_origin(post_type, note_data)
-            if not video_url:
-                raise ValueError('Video URL not found')
-            self._video_url = video_url[0]
-        elif post_type == PostType.carousel:
-            self._images_data = [], []  # images, (live) videos
-            images_data = note_data.get('imageList')
-            if not images_data:
-                raise ValueError('Image list not found')
-            for image_data in images_data:
-                file_id = image_data.get('fileId')
-                if not file_id:
-                    print('Image file ID not found', image_data)
-                    continue
-                image_url = self.XHS_PHOTO_ROOT + file_id
-                self._images_data[0].append(image_url)
-
-                if not image_data.get('livePhoto'):
-                    self._images_data[1].append(None)
-                else:
-                    video_url = self._get_max_quality_video_url(image_data)
-                    self._images_data[1].append(video_url)
-        
-        return PostInfo(
-            platform_post_id=platform_post_id,
-            post_type=post_type,
-            url=url,
-            share_url=self._current_url,
-            title=title,
-            caption_text=caption_text,
-            platform_created_at=platform_created_at,
-            platform_account_id=creator_platform_id,
-            username=creator_username,
-            display_name=creator_display_name,
-            profile_pic_url=profile_pic_url,
-            thumbnail_url=thumbnail_url,
-            metadata=metadata,
         )
     
     def download(self, db: Session, post: Post) -> list[PostMedia]:
