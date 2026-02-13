@@ -724,6 +724,27 @@ input, textarea, select {
     transform: scale(1.1);
 }
 
+.modal-delete {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: rgba(220, 38, 38, 0.15);
+    color: var(--error);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--transition-fast) ease;
+    z-index: 10;
+}
+
+.modal-delete:hover {
+    background: rgba(220, 38, 38, 0.25);
+    transform: scale(1.1);
+}
+
 /* ===== Media Modal ===== */
 .media-modal-content {
     position: relative;
@@ -1064,4 +1085,95 @@ input, textarea, select {
     .library-header {
         padding: 16px 20px;
     }
+}
+
+/* Delete Confirmation Modal */
+#delete-confirm-modal {
+    z-index: 1100; /* Higher than media modal (1000) */
+}
+
+.delete-confirm-content {
+    max-width: 500px;
+    background: var(--bg-elevated);
+    border-radius: 12px;
+    padding: 0;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.delete-confirm-header {
+    padding: 24px 24px 16px;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.delete-confirm-header h2 {
+    margin: 0;
+    font-size: 20px;
+    color: var(--error);
+}
+
+.delete-confirm-body {
+    padding: 24px;
+}
+
+.delete-warning {
+    color: var(--error);
+    font-weight: 500;
+    margin-bottom: 16px;
+}
+
+#delete-confirm-details {
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    padding: 16px;
+    margin-top: 12px;
+}
+
+#delete-confirm-details ul {
+    margin: 8px 0 0 0;
+    padding-left: 24px;
+}
+
+#delete-confirm-details li {
+    margin: 4px 0;
+    color: var(--text-secondary);
+}
+
+.delete-confirm-actions {
+    padding: 16px 24px 24px;
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+}
+
+.btn-danger {
+    background: var(--error);
+    color: white;
+    border: none;
+    padding: 10px 24px;
+    border-radius: 8px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: opacity 0.2s;
+}
+
+.btn-danger:hover {
+    opacity: 0.9;
+}
+
+.btn-secondary {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    padding: 10px 24px;
+    border-radius: 8px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.btn-secondary:hover {
+    background: var(--bg-hover);
 }

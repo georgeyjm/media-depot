@@ -191,7 +191,8 @@ def create_post(db: Session, platform: Platform, post_info: PostInfo, download_t
             )
             post.thumbnail_asset_id = thumbnail_asset.id
         except Exception:
-            pass
+            # pass
+            raise
     
     if commit:
         db.commit()
@@ -400,3 +401,59 @@ def get_post(db: Session, post_id: int) -> Post | None:
         joinedload(Post.media_items).joinedload(PostMedia.media_asset),
     ).get(post_id)
     return post
+
+
+def delete_orphaned_media_files(db: Session, media_assets: list[MediaAsset]) -> list[str]:
+    '''Delete media files from disk if they are no longer referenced by any posts.
+
+    Safety checks:
+    - Only deletes if MediaAsset has zero PostMedia references
+    - Only deletes if MediaAsset is not used as thumbnail or profile pic
+    - Handles file-not-found errors gracefully
+
+    Args:
+        db: Database session
+        media_assets: List of MediaAsset objects to check for deletion
+
+    Returns:
+        List of file paths that were successfully deleted
+    '''
+    from sqlalchemy.exc import InvalidRequestError
+
+    deleted_files = []
+
+    for asset in media_assets:
+        # Try to refresh - skip if asset was already cascade-deleted
+        try:
+            db.refresh(asset)
+        except InvalidRequestError:
+            # Asset was already deleted (e.g., cascade delete from thumbnail relationship)
+            continue
+
+        # Check if asset is still referenced
+        has_post_media_refs = len(asset.post_media_refs) > 0
+        is_thumbnail = db.query(Post).filter_by(thumbnail_asset_id=asset.id).first() is not None
+        is_profile_pic = db.query(Creator).filter_by(profile_pic_asset_id=asset.id).first() is not None
+
+        if not has_post_media_refs and not is_thumbnail and not is_profile_pic:
+            # Safe to delete file
+            file_path = Path(settings.MEDIA_ROOT_DIR) / asset.file_path
+
+            try:
+                if file_path.exists():
+                    file_path.unlink()
+                    deleted_files.append(str(asset.file_path))
+                    print(f'Deleted orphaned file: {file_path}')
+
+                # Delete MediaAsset record to avoid broken references
+                db.delete(asset)
+
+            except Exception as e:
+                print(f'Failed to delete file {file_path}: {e}')
+                # Continue with other files even if one fails
+
+    # Commit all MediaAsset deletions
+    if deleted_files:
+        db.commit()
+
+    return deleted_files

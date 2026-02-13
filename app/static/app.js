@@ -81,6 +81,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initDrawer();
     initLibrary();
     initModals();
+    initDeleteHandlers();
     loadTasksFromStorage();
     
     // Handle initial page based on URL
@@ -765,6 +766,212 @@ function renderPosts() {
     });
     
     loadMoreBtn.style.display = state.posts.hasMore ? 'block' : 'none';
+}
+
+// ===== Delete Functionality =====
+// Delete Confirmation Modal State
+let pendingDelete = null; // { type: 'post' | 'item', postId, postMediaId?, details }
+
+function initDeleteHandlers() {
+    const deleteBtn = $('#modal-delete');
+    const deleteConfirmModal = $('#delete-confirm-modal');
+    const deleteCancelBtn = $('#delete-confirm-cancel');
+    const deleteCloseBtn = $('#delete-confirm-close');
+
+    // Delete button click
+    deleteBtn?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        showDeleteOptions();
+    });
+
+    // Cancel delete
+    [deleteCancelBtn, deleteCloseBtn, deleteConfirmModal].forEach(el => {
+        el?.addEventListener('click', (e) => {
+            if (e.target === el) {
+                hideDeleteConfirmation();
+            }
+        });
+    });
+}
+
+function showDeleteOptions() {
+    const post = state.currentPost;
+    if (!post) return;
+
+    const modal = $('#delete-confirm-modal');
+    const title = $('#delete-confirm-title');
+    const details = $('#delete-confirm-details');
+    const actionsDiv = modal.querySelector('.delete-confirm-actions');
+
+    const mediaCount = post.media_items?.length || 0;
+    const hasThumb = post.thumbnail_path ? 1 : 0;
+
+    if (mediaCount <= 1) {
+        // Single item or no items - show simple confirmation to delete post
+        title.textContent = 'Delete Post?';
+        details.innerHTML = `
+            <p><strong>This will delete:</strong></p>
+            <ul>
+                <li>Post: "${post.title || 'Untitled'}"</li>
+                ${mediaCount > 0 ? `<li>1 media file</li>` : ''}
+                ${hasThumb ? '<li>1 thumbnail</li>' : ''}
+                <li>All associated metadata</li>
+            </ul>
+            <p style="margin-top: 12px; color: var(--text-secondary);">
+                Physical files will be removed from disk.
+            </p>
+        `;
+
+        // Simple confirm/cancel buttons
+        actionsDiv.innerHTML = `
+            <button class="btn-secondary" id="delete-confirm-cancel">Cancel</button>
+            <button class="btn-danger" id="delete-confirm-delete-post">Delete Post</button>
+        `;
+
+        // Add click handler for delete post button
+        const deletePostBtn = $('#delete-confirm-delete-post');
+        deletePostBtn.addEventListener('click', async () => {
+            await executeDelete({ type: 'post', postId: post.id });
+            hideDeleteConfirmation();
+        });
+
+    } else {
+        // Multiple items - show options to delete post or current item
+        const currentIndex = state.currentMediaIndex;
+        const currentItem = post.media_items?.[currentIndex];
+
+        title.textContent = 'Delete Options';
+        details.innerHTML = `
+            <p><strong>What would you like to delete?</strong></p>
+            <p style="margin-top: 12px; color: var(--text-secondary);">
+                This post has ${mediaCount} media items. You can delete the entire post or just the current item.
+            </p>
+        `;
+
+        // Two delete buttons + cancel
+        actionsDiv.innerHTML = `
+            <button class="btn-secondary" id="delete-confirm-cancel">Cancel</button>
+            <button class="btn-danger" id="delete-confirm-delete-item" style="background: rgba(220, 38, 38, 0.7);">
+                Delete Current Item (${currentIndex + 1}/${mediaCount})
+            </button>
+            <button class="btn-danger" id="delete-confirm-delete-post">Delete Entire Post</button>
+        `;
+
+        // Add click handlers
+        const deleteItemBtn = $('#delete-confirm-delete-item');
+        const deletePostBtn = $('#delete-confirm-delete-post');
+
+        deleteItemBtn.addEventListener('click', async () => {
+            await executeDelete({
+                type: 'item',
+                postId: post.id,
+                postMediaId: currentItem.id
+            });
+            hideDeleteConfirmation();
+        });
+
+        deletePostBtn.addEventListener('click', async () => {
+            await executeDelete({ type: 'post', postId: post.id });
+            hideDeleteConfirmation();
+        });
+    }
+
+    // Re-attach cancel button handler
+    const cancelBtn = $('#delete-confirm-cancel');
+    const closeBtn = $('#delete-confirm-close');
+    [cancelBtn, closeBtn].forEach(btn => {
+        btn?.addEventListener('click', hideDeleteConfirmation);
+    });
+
+    modal.classList.add('active');
+}
+
+function hideDeleteConfirmation() {
+    const modal = $('#delete-confirm-modal');
+    modal.classList.remove('active');
+    pendingDelete = null;
+}
+
+async function executeDelete(deleteInfo) {
+    const { type, postId, postMediaId } = deleteInfo;
+
+    try {
+        if (type === 'post') {
+            // Delete entire post
+            const response = await fetch(`/api/posts/${postId}`, {
+                method: 'DELETE',
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to delete post');
+            }
+
+            const result = await response.json();
+
+            // Remove from state
+            state.posts.items = state.posts.items.filter(p => p.id !== postId);
+
+            // Close modal and refresh grid
+            closeMediaModal();
+            renderPosts();
+
+            showNotification(`Post deleted (${result.files_deleted.length} files removed)`, 'info');
+
+        } else if (type === 'item') {
+            // Delete individual media item
+            const response = await fetch(`/api/posts/${postId}/media/${postMediaId}`, {
+                method: 'DELETE',
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to delete media item');
+            }
+
+            const result = await response.json();
+
+            if (result.remaining_count === 0) {
+                // No media left - close modal and remove post from grid
+                state.posts.items = state.posts.items.filter(p => p.id !== postId);
+                closeMediaModal();
+                renderPosts();
+                showNotification('Last media item deleted. Post removed.', 'info');
+            } else {
+                // Re-fetch post to get updated media list
+                await fetchAndShowPost(postId);
+                showNotification(`Media item deleted (${result.remaining_count} remaining)`, 'info');
+            }
+        }
+
+    } catch (error) {
+        console.error('Delete failed:', error);
+        showNotification('Failed to delete. Please try again.', 'error');
+    }
+}
+
+async function fetchAndShowPost(postId) {
+    try {
+        const response = await fetch(`/api/posts/${postId}`);
+        if (!response.ok) throw new Error('Failed to fetch post');
+
+        const updatedPost = await response.json();
+
+        // Update in state
+        const index = state.posts.items.findIndex(p => p.id === postId);
+        if (index !== -1) {
+            state.posts.items[index] = updatedPost;
+        }
+
+        // Update modal view
+        state.currentPost = updatedPost;
+        state.currentMediaIndex = Math.min(state.currentMediaIndex, updatedPost.media_items.length - 1);
+
+        // Re-render the media
+        renderCurrentMedia();
+
+    } catch (error) {
+        console.error('Failed to refresh post:', error);
+        closeMediaModal();
+    }
 }
 
 // ===== Modals =====

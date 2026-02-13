@@ -24,10 +24,10 @@ class PostMediaUpdate(BaseModel):
 class PostMediaResponse(PostMediaBase):
     '''Schema for PostMedia API responses.'''
     # We are (un-)abstracting away the MediaAsset layer here
+    id: int  # Required for delete operations
     media_type: MediaType
     file_path: str
     # media_asset: MediaAssetResponse
-    # id: int
     # created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
