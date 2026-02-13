@@ -41,10 +41,49 @@ class XhsHandler(BaseHandler):
                 return [url]
             print(f'Origin video URL not found in HTML: {self._html}')
         return []
+
+    def extract_media_urls_non_origin(self, post_type: PostType, note_data: dict) -> list[str]:
+        '''
+        Since Xiaohongshu removed "originVideoKey" for videos, we only have access to non-original compressed videos.
+        This function extracts those video links.
+        '''
+        assert self._html is not None, 'Page is not loaded yet'
+        if post_type == PostType.video:
+            assert 'video' in note_data and 'media' in note_data['video'], f'Missing video keys in note data: {note_data}'
+            media_data = note_data['video']['media']
+            url = unescape_unicode(self._get_max_quality_video_url(media_data))
+            return [url]
+        return []
     
-    def get_post_type(self) -> PostType:
-        # TODO: Maybe remove
-        raise NotImplementedError
+    def _get_max_quality_video_url(self, media_data: dict) -> str:
+        stream_data = media_data.get('stream')
+        if not stream_data:
+            raise ValueError(f'No stream data found in {media_data}')
+        
+        encoding_priority = ('h265', 'h266', 'av1', 'h264')
+        for enc in encoding_priority:
+            if streams := stream_data.get(enc):
+                break
+        else:
+            raise ValueError('Cannot find any valid encoding')
+        
+        stream = max(streams, key=lambda s: s.get('videoBitrate', 0))  # Alternative: 'avgBitrate', 'height'/'width'
+        # In the future, we can return all URLs for fallback purposes
+        url = stream.get('masterUrl') or stream.get('backupUrls', [])[0]
+        if not url:
+            raise ValueError(f'Cannot find a valid URL in {stream}')
+        return url
+    
+    def get_post_type(self, post_type_string: str) -> PostType:
+        return {
+            # Web values:
+            'normal': PostType.carousel,
+            'video': PostType.video,
+            # API values:
+            '图集': PostType.carousel,
+            '图文': PostType.carousel,
+            '视频': PostType.video,
+        }.get(post_type_string.lower(), PostType.unknown)
     
     def extract_info_by_api(self) -> PostInfo | None:
         '''Extract post metadata and information using third-party API.'''
@@ -67,11 +106,7 @@ class XhsHandler(BaseHandler):
         except Exception:
             raise  # In the future, simply return None
         
-        post_type = {
-            '图集': PostType.carousel,
-            '图文': PostType.carousel,
-            '视频': PostType.video,
-        }.get(api_data.get('作品类型'), PostType.unknown)
+        post_type = self.get_post_type(api_data.get('作品类型'))
         platform_post_id = api_data.get('作品ID')
 
         url = self._resolved_url # We retain xsec_token, unlike: api_data.get('作品链接')
@@ -152,16 +187,21 @@ class XhsHandler(BaseHandler):
             # Post is non-existent
             return None
         
-        if not self._soup:
+        if self._soup is None:
             self._soup = BeautifulSoup(self._html, 'html.parser')
-        if el := self._soup.find('script', string=re.compile(r'window\.__INITIAL_STATE__=')):
+        if el := self._soup.find('script', string=re.compile(r'window\.__INITIAL_STATE__=')):  # type: ignore
             # Parse JavaScript data
             js_string = el.string[len('window.__INITIAL_STATE__='):]
             js_string = re.sub(r'\bundefined\b', 'null', js_string)
             js_string = re.sub(r'\bNaN\b|\bInfinity\b', 'null', js_string)
             try:
                 note_data = json.loads(js_string)
-                note_data = note_data['noteData']['data']['noteData']
+                if 'noteData' in note_data:
+                    # Using iOS Safari user agent
+                    note_data = note_data['noteData']['data']['noteData']
+                else:
+                    # Using Web Chrome user agent
+                    note_data = list(note_data['note']['noteDetailMap'].values())[0]['note']
             except (json.JSONDecodeError, KeyError, TypeError) as e:
                 print(self._resolved_url)
                 print(js_string)
@@ -169,14 +209,10 @@ class XhsHandler(BaseHandler):
         else:
             raise ValueError('Failed to find JavaScript data')
         
-        post_type = {
-            'normal': PostType.carousel,
-            'video': PostType.video,
-        }.get(note_data.get('type'), PostType.unknown)
-        # if post_type == PostType.unknown:
-        #     raise ValueError('Unknown post type')
+        metadata = {}
+        post_type = self.get_post_type(note_data.get('type'))
 
-        url = self._resolved_url # We retain xsec_token, unlike: api_data.get('作品链接')
+        url = self._resolved_url  # We retain xsec_token, unlike: api_data.get('作品链接')
         platform_post_id = note_data.get('noteId')
         title = note_data.get('title')
         caption_text = note_data.get('desc')
@@ -205,9 +241,15 @@ class XhsHandler(BaseHandler):
 
         # Extract media links for download
         if post_type == PostType.video:
-            video_url = self.extract_media_urls(post_type)
+            try:
+                video_url = self.extract_media_urls(post_type)
+                if not video_url:
+                    raise ValueError('Origin video URL not found')
+            except Exception as e:
+                metadata['using_non_origin_video'] = True
+                video_url = self.extract_media_urls_non_origin(post_type, note_data)
             if not video_url:
-                raise ValueError('Origin video URL not found')
+                raise ValueError('Video URL not found')
             self._video_url = video_url[0]
         elif post_type == PostType.carousel:
             self._images_data = [], []  # images, (live) videos
@@ -225,11 +267,7 @@ class XhsHandler(BaseHandler):
                 if not image_data.get('livePhoto'):
                     self._images_data[1].append(None)
                 else:
-                    stream_data = image_data.get('stream')
-                    if not stream_data:
-                        raise ValueError('Stream data not found')
-                    stream_data = stream_data.get('h265') or stream_data.get('h266') or stream_data.get('av1') or stream_data.get('h264')
-                    video_url = stream_data[0].get('masterUrl') or stream_data[0].get('backupUrls')[0]
+                    video_url = self._get_max_quality_video_url(image_data)
                     self._images_data[1].append(video_url)
         
         return PostInfo(
@@ -245,6 +283,7 @@ class XhsHandler(BaseHandler):
             display_name=creator_display_name,
             profile_pic_url=profile_pic_url,
             thumbnail_url=thumbnail_url,
+            metadata=metadata,
         )
     
     def download(self, db: Session, post: Post) -> list[PostMedia]:

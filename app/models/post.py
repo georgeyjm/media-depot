@@ -4,11 +4,11 @@ from typing import Optional
 from sqlalchemy import String, DateTime, Text, ForeignKey, Index, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.models import Base, TimestampMixin
+from app.models import Base, TimestampMixin, MetadataJSONMixin
 from app.models.enums import PostType, JobStatus, MediaType
 
 
-class Post(Base, TimestampMixin):
+class Post(Base, TimestampMixin, MetadataJSONMixin):
     __tablename__ = 'posts'
     
     id: Mapped[int] = mapped_column(primary_key=True)

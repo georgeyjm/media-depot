@@ -28,6 +28,7 @@ class PostInfo(PostBase):
     profile_pic_url: Optional[str] = None
     thumbnail_url: Optional[str] = None
     creator_metadata: Optional[dict[str, Any]] = None
+    metadata: Optional[dict[str, Any]] = None
 
 
 class PostCreate(PostBase):

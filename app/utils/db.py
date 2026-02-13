@@ -165,6 +165,7 @@ def create_post(db: Session, platform: Platform, post_info: PostInfo, download_t
         platform_created_at=post_info.platform_created_at,
         thumbnail_asset_id=None,
         thumbnail_url=post_info.thumbnail_url,
+        metadata_=post_info.metadata,
     )
     db.add(post)
     try:
