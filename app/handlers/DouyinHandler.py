@@ -23,7 +23,7 @@ class DouyinHandler(BaseHandler):
         r'https?://v\.douyin\.com/[a-zA-Z0-9_-]+/?',  # Share URL
     )
     # CREATOR_URL_PATTERN = r'(?:https?:)?//space\.bilibili\.com/(\d+)'
-    API_ROOT = f'http://localhost:{settings.DOUYIN_DOWNLOADER_PORT}'
+    API_ROOT = settings.douyin_api_root
 
     def extract_media_urls(self) -> list[str]:
         raise NotImplementedError

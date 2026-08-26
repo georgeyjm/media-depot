@@ -1,46 +1,143 @@
-version: "3.9"
+# Media Depot - full stack.
+#
+#   docker compose up -d --build          start everything
+#   docker compose logs -f api worker     follow logs
+#   docker compose down                   stop (data in named volumes survives)
+#
+# Ports are written as "HOST:CONTAINER". Only the host side can collide with
+# something already running on your Mac, which is why postgres and redis are
+# published on non-default host ports.
+name: media-depot
+
+# A YAML anchor: define the app's environment once, reuse it in api + worker.
+x-app-environment: &app-environment
+  # .env points these at localhost, which inside a container means the container
+  # itself. On the compose network each service is reachable by its own name.
+  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+  REDIS_URL: redis://redis:6379/0
+  DOUYIN_DOWNLOADER_HOST: douyin-downloader
+  # Browser cookie extraction cannot work in a container (the cookie DB is
+  # encrypted with a key in the macOS keychain). Read the file the host writes.
+  COOKIES_FROM_BROWSER: "none"
+
+# Same for the two bind mounts every app container needs.
+x-app-volumes: &app-volumes
+  # ./media on your Mac IS /app/media in the container - one directory, two
+  # names. Downloads survive rebuilds and you can open them in Finder.
+  - ./media:/app/media
+  # cookies.txt + converted HEIC/AVIF images. Refreshing cookies on the host
+  # is visible to the running container immediately.
+  - ./.cache:/app/.cache
 
 services:
+  # One-shot: create tables and seed platforms, then exit. api and worker wait
+  # for it to finish successfully, so neither races the other over the schema.
+  migrate:
+    build: .
+    command: uv run scripts/init_db.py
+    env_file: [.env]
+    environment: *app-environment
+    volumes: *app-volumes
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   api:
     build: .
     command: uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
-    env_file:
-      - .env
+    env_file: [.env]
+    environment: *app-environment
+    volumes: *app-volumes
     ports:
-      - "8000:8000"
+      - "${API_HOST_PORT:-8000}:8000"
     depends_on:
-      - postgres
-      - redis
-    volumes:
-      - ./media:/media
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
 
   worker:
     build: .
-    command: uv run rq worker downloads --with-scheduler
-    env_file:
-      - .env
+    # Use worker.py, not `rq worker`: the RQ CLI reads RQ_REDIS_URL (or defaults
+    # to localhost) and would ignore REDIS_URL entirely.
+    command: uv run worker.py
+    env_file: [.env]
+    environment: *app-environment
+    volumes: *app-volumes
     depends_on:
-      - postgres
-      - redis
-    volumes:
-      - ./media:/media
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      douyin-downloader:
+        condition: service_started
+    restart: unless-stopped
 
   redis:
     image: redis:8-alpine
-    ports:
-      - "6380:6379"
     command: redis-server --appendonly yes
+    ports:
+      - "${REDIS_HOST_PORT:-6380}:6379"
     volumes:
-    - redis_data:/data
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
 
   postgres:
     image: postgres:18-alpine
-    env_file:
-      - .env
+    env_file: [.env]
     ports:
-      - "5433:5432"
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      # postgres:18+ wants ONE mount at /var/lib/postgresql and puts the cluster
+      # in a version-named subdirectory (.../18/docker). Mounting the pre-18
+      # path /var/lib/postgresql/data makes the image refuse to start.
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      # depends_on alone only waits for the container to START. Postgres needs
+      # several more seconds before it accepts connections; without this the
+      # app crashes on boot.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # DouK-Downloader (github.com/JoeanAmier/TikTokDownloader) in Web API mode.
+  # Built from your local checkout; override the path with DOUYIN_CONTEXT.
+  # ./services/douyin/Volume holds its settings.json (which pins Web API mode)
+  # and its SQLite db - see scripts/setup_douyin.sh.
+  douyin-downloader:
+    build:
+      context: ${DOUYIN_CONTEXT:-../TikTokDownloader}
+    image: douyin-downloader:latest
+    ports:
+      - "${DOUYIN_HOST_PORT:-5555}:5555"
+    volumes:
+      - ./services/douyin/Volume:/app/Volume
+    # Keep a TTY attached: the app is a menu-driven TUI that only skips the menu
+    # because settings.json pre-selects a mode. Without a TTY it can hit EOF.
+    stdin_open: true
+    tty: true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5555/docs')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
 
 volumes:
   pgdata:

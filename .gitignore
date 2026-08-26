@@ -62,3 +62,6 @@ profile_pics/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Local service state (contains cookies - never commit)
+services/*/Volume/

@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 from app.config import settings
-from app.db import engine, SessionLocal
+from app.db import engine, SessionLocal, healthcheck_db
 from app.models import Base
 from app.routers import downloads_router, posts_router, media_router
 from app.handlers import initialize_platforms
@@ -44,6 +44,15 @@ app = FastAPI(
     version='0.1.0',
     lifespan=lifespan,
 )
+
+
+### Health
+
+@app.get('/healthz')
+async def healthz() -> dict:
+    '''Liveness/readiness probe used by the container healthcheck.'''
+    healthcheck_db()
+    return {'status': 'ok'}
 
 
 ### Page Routes

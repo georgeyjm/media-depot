@@ -48,11 +48,17 @@ dump.rdb
 logs/
 *.log
 
-# Media and Downloads (will be mounted as volumes)
+# Media and cache (bind-mounted at runtime, never baked into the image)
 media/
 downloads/
 profile_pics/
 .cache/
+
+# Local service state
+services/
+
+# Test fixtures
+tests/
 
 # OS generated files
 .DS_Store
