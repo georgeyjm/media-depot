@@ -115,14 +115,19 @@ services:
       retries: 10
     restart: unless-stopped
 
-  # DouK-Downloader (github.com/JoeanAmier/TikTokDownloader) in Web API mode.
-  # Built from your local checkout; override the path with DOUYIN_CONTEXT.
+  # DouK-Downloader (github.com/JoeanAmier/TikTokDownloader) in Web API mode,
+  # pulled from the project's own published image - no local checkout needed.
+  #
+  # Pinned to 5.8-dev deliberately. Do NOT use :latest - it is still 5.7, which
+  # binds its API server to 127.0.0.1 inside the container, making it
+  # unreachable from the worker and from the published port. 5.8 changed that
+  # to 0.0.0.0. scripts/setup_douyin.sh re-checks this for whatever image you
+  # point it at.
+  #
   # ./services/douyin/Volume holds its settings.json (which pins Web API mode)
   # and its SQLite db - see scripts/setup_douyin.sh.
   douyin-downloader:
-    build:
-      context: ${DOUYIN_CONTEXT:-../TikTokDownloader}
-    image: douyin-downloader:latest
+    image: ${DOUYIN_IMAGE:-ghcr.io/joeanamier/tiktok-downloader:5.8-dev}
     ports:
       - "${DOUYIN_HOST_PORT:-5555}:5555"
     volumes:

@@ -5,29 +5,142 @@ A web application for crawling, downloading, storing, and managing media content
 
 ## Running with Docker (recommended)
 
-One-time setup:
+### First-time setup
+
+Prerequisites: **Docker Desktop** and **uv**. Everything else runs in containers.
 
 ```shell
-cp .env.example .env          # adjust credentials if you like
-./scripts/setup_douyin.sh     # seeds the Douyin service so it needs no TTY
-uv run scripts/refresh_cookies.py   # writes .cache/cookies.txt (see Cookies below)
+# 1. Config. Nothing here is secret by default; adjust credentials if you like.
+cp .env.example .env
+
+# 2. Seed the Douyin service. Pulls its image and writes the state that would
+#    otherwise require answering a disclaimer prompt and a menu by hand.
+./scripts/setup_douyin.sh
+
+# 3. Extract browser cookies. Must run on the host - see "Cookies" below.
+#    Also syncs the Douyin cookie into the Douyin service.
+uv run scripts/refresh_cookies.py
+
+# 4. Build and start everything.
+docker compose up -d --build
 ```
 
-Then, every time:
+Steps 2 and 3 are order-independent. `refresh_cookies.py` creates the Douyin
+settings file if it does not exist yet, and `setup_douyin.sh` merges into
+whatever is already there, preserving the cookie.
+
+Open <http://localhost:8000>. Check everything came up healthy:
+
+```shell
+docker compose ps
+```
+
+You should see `api`, `douyin-downloader`, `postgres`, `redis` as `healthy` and
+`worker` as `Up`. (`migrate` runs once and exits - that is correct.)
+
+Optional, but recommended:
+
+- **Keep cookies fresh automatically** - install the launchd agent (see
+  [Cookies](#cookies)). Without it, cookies go stale and authenticated
+  platforms start failing after a day or so.
+- **Import an existing library** from another machine (see
+  [Importing](#importing-an-existing-library-from-another-machine)).
+
+### Every time after that
+
+```shell
+# 1. Docker Desktop must be running. If it is not:
+open -a Docker
+
+# 2. Start the stack.
+docker compose up -d
+```
+
+That is it - no `--build`, no scripts. `docker compose up -d` is idempotent, so
+running it when everything is already up does nothing.
+
+**`refresh_cookies.py` does not need to run on every boot.** Cookies live in
+`.cache/cookies.txt`, which persists across restarts. They do go stale though,
+so either install the launchd agent (see [Cookies](#cookies)) to refresh hourly,
+or re-run it by hand when downloads start failing:
+
+```shell
+uv run scripts/refresh_cookies.py --check   # how old are they?
+uv run scripts/refresh_cookies.py           # refresh now
+```
+
+Use `--build` **only after changing application code**, since the source is
+copied into the image:
 
 ```shell
 docker compose up -d --build
 ```
 
-That starts postgres, redis, a one-shot database init, the API, a worker, and the
-Douyin extraction service. The UI is at http://localhost:8000.
+### Everyday commands
 
 ```shell
-docker compose logs -f api worker   # follow logs
-docker compose ps                   # what is running / healthy
-docker compose down                 # stop; named volumes keep your data
-docker compose up -d --scale worker=4
+docker compose ps                    # what is running / healthy
+docker compose logs -f api worker    # follow logs
+docker compose down                  # stop; named volumes keep your data
+docker compose restart worker        # restart one service
+docker compose up -d --scale worker=4    # more download throughput
 ```
+
+Submitting downloads: paste a share link into the web UI, or use the CLI:
+
+```shell
+uv run cli.py --share 'https://www.bilibili.com/video/BV...'
+uv run cli.py --file shares.txt
+```
+
+### If something is wrong
+
+| Symptom | Check |
+|---|---|
+| `Cannot connect to the Docker daemon` | Docker Desktop is not running - `open -a Docker` |
+| Downloads fail on XHS / Instagram | Cookies are stale - `uv run scripts/refresh_cookies.py` |
+| Douyin fails with `响应内容不是有效的 JSON 数据` | Same command; it syncs the Douyin cookie too |
+| A container keeps restarting | `docker compose logs <service>` |
+| Schema/DB looks wrong | `docker compose exec api uv run scripts/verify_import.py` |
+
+### The Douyin service
+
+Douyin extraction is handled by DouK-Downloader, pulled from the project's own
+published image - no local checkout required:
+
+```
+ghcr.io/joeanamier/tiktok-downloader:5.8-dev
+```
+
+**Do not switch it to `:latest`.** That tag is still 5.7, which binds its API
+server to `127.0.0.1` *inside the container*, making it unreachable both from
+the worker and from the published port. 5.8 changed this to `0.0.0.0`. Override
+the tag with `DOUYIN_IMAGE` in `.env` if you need to.
+
+`scripts/setup_douyin.sh` reads the menu layout out of whatever image you point
+it at and writes the correct `run_command` index into `settings.json`, rather
+than hardcoding one - upstream reorders that menu between releases. It also
+warns if the image binds to loopback.
+
+**Douyin keeps its own cookie**, separate from `.cache/cookies.txt` - it lives in
+the `cookie` field of `services/douyin/Volume/settings.json`. Without it requests
+fail with `响应内容不是有效的 JSON 数据` ("response is not valid JSON").
+
+`scripts/refresh_cookies.py` handles this automatically: it pulls the
+`douyin.com` cookies out of the browser jar, writes them into that settings file
+as a `k=v; k=v` string, and restarts the service so it loads them (that value is
+only read at startup). It restarts **only when the cookie actually changed**, so
+an hourly refresh will not interrupt in-flight downloads.
+
+```shell
+uv run scripts/refresh_cookies.py --check        # is it in sync?
+uv run scripts/refresh_cookies.py --skip-douyin  # leave the service alone
+uv run scripts/refresh_cookies.py --no-restart   # write it, restart later
+```
+
+For public posts the anonymous cookies (`ttwid`, `odin_tt`, `__ac_signature`)
+are enough. Logging in to Douyin in your browser adds `sessionid`, which the
+script will pick up on the next run; it warns when that is absent.
 
 ### Cookies
 
@@ -161,6 +274,8 @@ Note for macOS, set `OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES`.
 ```shell
 docker compose up -d douyin-downloader
 ```
+
+It is pulled from a published image, so this works without a local checkout.
 
 `.env` describes host-side usage, so `DATABASE_URL`/`REDIS_URL` should point at
 `localhost` on the published ports (5433 and 6380 by default). `docker-compose.yml`

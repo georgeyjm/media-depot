@@ -10,6 +10,8 @@ A web application for crawling, downloading, storing, and managing media content
 - **Task Queue**: Redis + RQ workers
 - **Package Manager**: uv
 - **Downloads**: yt-dlp, gallery-dl
+- **Deployment**: Docker Compose (`docker compose up -d` runs the whole stack)
+- **External services**: DouK-Downloader for Douyin, run as a container
 
 ### Project Structure
 ```
@@ -33,9 +35,18 @@ app/
 │   ├── download.py    # Core download logic
 │   ├── db.py          # Database helpers
 │   └── cookies.py     # Cookie management
+├── routers/           # FastAPI route modules (downloads, posts, media)
+├── static/            # Frontend (plain HTML/CSS/JS, no build step)
 ├── main.py           # FastAPI app entry point
 └── workers.py        # RQ worker task definitions
 worker.py             # Worker process entry point
+cli.py                # CLI client that talks to the API over HTTP
+scripts/
+├── init_db.py         # Create tables + seed platforms (compose 'migrate' service)
+├── refresh_cookies.py # HOST-side: browser -> .cache/cookies.txt + Douyin cookie
+├── setup_douyin.sh    # One-time seeding of the Douyin service state
+├── import_dump.sh     # Restore a pg_dump into the compose database
+└── verify_import.py   # Schema drift + missing media check
 ```
 
 ## Core Concepts
@@ -180,21 +191,85 @@ post_media = link_post_media_asset(
 
 ## Development Workflow
 
-### Running locally
+### Running with Docker (the normal way)
 
-1. Start PostgreSQL
-2. Start Redis: `redis-server`
+**First-time setup** (prerequisites: Docker Desktop, uv):
+
+```bash
+cp .env.example .env                # config
+./scripts/setup_douyin.sh           # pull + seed the Douyin service
+uv run scripts/refresh_cookies.py   # HOST-side cookie extraction
+docker compose up -d --build        # build and start everything
+```
+
+Steps 2 and 3 are order-independent: `refresh_cookies.py` creates
+`services/douyin/Volume/settings.json` if absent, and `setup_douyin.sh` merges
+into whatever exists, preserving the `cookie` field.
+
+**Every time after that:**
+
+```bash
+open -a Docker          # only if Docker Desktop is not already running
+docker compose up -d    # no --build needed
+```
+
+`refresh_cookies.py` is NOT needed on every boot - `.cache/cookies.txt` persists.
+Run it when cookies go stale (the launchd agent does this hourly).
+
+UI at http://localhost:8000. Use `--build` only after changing application code,
+since source is copied into the image (there is no source bind-mount).
+
+```bash
+docker compose ps                   # health status
+docker compose logs -f api worker   # follow logs
+docker compose down                 # stop; named volumes keep data
+docker compose up -d --scale worker=4
+```
+
+Services: `postgres`, `redis`, `migrate` (one-shot, runs `scripts/init_db.py`
+then exits - that is correct), `api`, `worker`, `douyin-downloader`.
+
+**Key container facts:**
+- Containers reach each other by *service name* (`postgres:5432`, `redis:6379`,
+  `douyin-downloader:5555`), never `localhost`. `docker-compose.yml` overrides
+  `DATABASE_URL`/`REDIS_URL`/`DOUYIN_DOWNLOADER_HOST` from `.env` for this.
+- `./media` and `./.cache` are bind-mounted at `/app/media` and `/app/.cache`.
+  Host edits are visible to running containers immediately.
+- `api` and `worker` wait on `migrate` completing successfully, and on postgres
+  and redis being *healthy* (not merely started).
+
+### Running locally (without Docker)
+
+1. Start PostgreSQL and Redis (`redis-server`)
+2. Create the schema: `uv run scripts/init_db.py`
 3. Start API: `uv run fastapi run`
 4. Start workers: `OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES uv run worker.py` (macOS)
-5. External services: `docker start -i douyin-downloader`
+5. Douyin service: `docker compose up -d douyin-downloader`
+
+Requires `brew install libmagic` on the host for `python-magic`.
+`.env` describes host-side usage, so its URLs point at `localhost` on the
+published ports (5433 for postgres, 6380 for redis).
+
+### Cookies
+
+Browser cookie extraction **cannot run inside a container** - the cookie DB is
+encrypted with a key in the macOS keychain. `scripts/refresh_cookies.py` runs on
+the host, writes `.cache/cookies.txt` (bind-mounted in), and also syncs the
+`douyin.com` cookies into `services/douyin/Volume/settings.json`, restarting the
+Douyin service only when that value changed. Containers set
+`COOKIES_FROM_BROWSER=none` so they never attempt extraction.
+
+A launchd agent (`scripts/com.mediadepot.refresh-cookies.plist`) runs it hourly.
 
 ### Database migrations
 
-Using Alembic (assumed):
-```bash
-alembic revision --autogenerate -m "description"
-alembic upgrade head
-```
+**There are none.** `alembic/` exists but has no `versions/`; the schema is
+created by `Base.metadata.create_all()` via `scripts/init_db.py`.
+
+The consequence: `create_all()` creates missing *tables* but never missing
+*columns*. After restoring an older dump, run
+`docker compose exec api uv run scripts/verify_import.py` - it diffs the models
+against the live schema and lists columns that must be added by hand.
 
 ### Adding a new platform handler
 
