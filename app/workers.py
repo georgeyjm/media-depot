@@ -43,8 +43,9 @@ def process_download_job(job_id: int) -> None:
             raise ValueError(f'No handler found for share: {job.share_text}')
         # We have to check here because initialize_platforms is not called in the worker process
         # TODO: Currently we are manually calling ensure_platform_exists, but this is not the most elegant solution
-        if handler.PLATFORM is None:
-            handler.__class__.ensure_platform_exists(db=db)
+        # TODO: Using docker, this issue is resolved gracefully. I will still leave this bit of code here but commented just in case.
+        # if handler.PLATFORM is None:
+        #     handler.__class__.ensure_platform_exists(db=db)
         
         # Load the share URL and extract info
         handler.load(job.share_url)

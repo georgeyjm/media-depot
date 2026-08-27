@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Refresh Media Depot's cookie file from the browser, hourly.
+
+  Install:
+    cp scripts/com.mediadepot.refresh-cookies.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.mediadepot.refresh-cookies.plist
+  Run once now:
+    launchctl start com.mediadepot.refresh-cookies
+  Uninstall:
+    launchctl unload ~/Library/LaunchAgents/com.mediadepot.refresh-cookies.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mediadepot.refresh-cookies</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/uv</string>
+        <string>run</string>
+        <string>scripts/refresh_cookies.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/george/Desktop/Everything/Programming/Mini Projects/Media Crawler/media-depot</string>
+
+    <key>StartInterval</key>
+    <integer>3600</integer>
+
+    <!-- Also run once shortly after login, so cookies are fresh before you start work -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/george/Desktop/Everything/Programming/Mini Projects/Media Crawler/media-depot/.cache/refresh-cookies.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/george/Desktop/Everything/Programming/Mini Projects/Media Crawler/media-depot/.cache/refresh-cookies.log</string>
+</dict>
+</plist>

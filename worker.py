@@ -26,6 +26,15 @@ from app.utils.queue import get_redis_connection, get_queue
 
 def main():
     '''Start the RQ worker.'''
+    # Seed the platform rows and populate each handler class's PLATFORM /
+    # DOWNLOAD_DIR class variables. Jobs run in forked children, which inherit
+    # this class state, so doing it once here covers every job.
+    db = SessionLocal()
+    try:
+        initialize_platforms(db)
+    finally:
+        db.close()
+
     redis_conn = get_redis_connection()
     queue = get_queue()
     worker = Worker([queue], connection=redis_conn)

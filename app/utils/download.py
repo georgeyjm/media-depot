@@ -4,7 +4,6 @@ import re
 import uuid
 from pathlib import Path
 from typing import Any, Optional, Literal
-from http.cookiejar import MozillaCookieJar
 from urllib.parse import urlparse, unquote
 from mimetypes import guess_extension
 
@@ -19,129 +18,17 @@ from app.models.enums import UserAgent
 from app.utils.helpers import sanitize_filename
 
 
-# Module-level cache for cookie file path and last extraction time
-_cookie_cache_info: dict[str, Any] = {
-    'cookie_file': None,
-    'last_extracted': None,
-}
-
-
-def _extract_and_save_cookies(cookie_file: Path) -> bool:
-    '''
-    Extract cookies from browser using yt-dlp and save them to a file.
-    
-    Args:
-        cookie_file: Path where cookies should be saved.
-        
-    Returns:
-        True if cookies were successfully extracted and saved, False otherwise.
-    '''
-    try:
-        # Use yt-dlp with cookiesfrombrowser to extract cookies
-        # We need to make a request to trigger cookie extraction
-        extract_options = {
-            'cookiesfrombrowser': ('edge',),
-            'quiet': True,
-            'no_warnings': True,
-            'skip_download': True,
-        }
-        
-        # Make a request to bilibili.com to populate the cookie jar
-        # This will trigger cookie extraction from the browser
-        with YoutubeDL(extract_options) as ydl:
-            # try:
-            #     # Try to extract info from bilibili.com to populate cookies
-            #     # We don't need a specific video, just need to trigger cookie extraction
-            #     ydl.extract_info('https://www.bilibili.com/', download=False)
-            # except Exception:
-            #     # Even if extraction fails, cookies might still be populated
-            #     # yt-dlp extracts cookies before making the request
-            #     pass
-            
-            # Save cookies to file in Netscape format
-            # yt-dlp uses http.cookiejar.MozillaCookieJar or similar
-            if hasattr(ydl, 'cookiejar') and ydl.cookiejar:
-                cookie_file.parent.mkdir(parents=True, exist_ok=True)
-                # Save cookies in Netscape format
-                if isinstance(ydl.cookiejar, MozillaCookieJar):
-                    ydl.cookiejar.save(str(cookie_file), ignore_discard=True, ignore_expires=True)
-                else:
-                    # If it's a different type, convert to MozillaCookieJar
-                    mozilla_jar = MozillaCookieJar(str(cookie_file))
-                    for cookie in ydl.cookiejar:
-                        mozilla_jar.set_cookie(cookie)
-                    mozilla_jar.save(ignore_discard=True, ignore_expires=True)
-                return True
-    
-    except Exception:
-        # If extraction fails, return False
-        return False
-    
-    return False
-
-
-def _get_cookie_file() -> Optional[Path]:
-    '''
-    Get the path to the cached cookie file, extracting from browser if needed.
-    
-    Returns:
-        Path to the cookie file if available, None otherwise.
-    '''
-    cookie_file = settings.CACHE_DIR / 'cookies.txt'
-    current_time = time.time()
-    
-    # Check if we need to refresh cookies
-    needs_refresh = True
-    if cookie_file.exists():
-        if _cookie_cache_info['last_extracted'] is not None:
-            # Check if cache is still valid
-            time_since_extraction = current_time - _cookie_cache_info['last_extracted']
-            if time_since_extraction < settings.COOKIES_REFRESH_INTERVAL:
-                needs_refresh = False
-        else:
-            # Cookie file exists but we don't have timestamp info
-            # Use file modification time as fallback
-            file_mtime = cookie_file.stat().st_mtime
-            time_since_modification = current_time - file_mtime
-            if time_since_modification < settings.COOKIES_REFRESH_INTERVAL:
-                needs_refresh = False
-                _cookie_cache_info['last_extracted'] = file_mtime
-    
-    if needs_refresh:
-        # Extract cookies from browser and save to file
-        if _extract_and_save_cookies(cookie_file):
-            _cookie_cache_info['last_extracted'] = current_time
-            _cookie_cache_info['cookie_file'] = cookie_file
-        else:
-            # If extraction fails, check if old cookie file exists and is valid
-            if cookie_file.exists() and cookie_file.stat().st_size > 0:
-                # Use old cookie file even though it's expired
-                # This is better than falling back to browser extraction every time
-                return cookie_file
-            # If no valid cookie file exists, return None to fall back to cookiesfrombrowser
-            return None
-    
-    _cookie_cache_info['cookie_file'] = cookie_file
-    # Verify cookie file exists and is not empty
-    if cookie_file.exists() and cookie_file.stat().st_size > 0:
-        return cookie_file
-    return None
-
-
-def get_all_cookies() -> httpx.Cookies | None:
-    '''
-    Get all cookies from the cookie file and return them in httpx.Cookies format.
-    '''
-    cookie_file = _get_cookie_file()
-    if not (cookie_file and cookie_file.exists()):
-        return None
-    
-    cookie_jar = MozillaCookieJar()
-    cookie_jar.load(str(cookie_file), ignore_discard=True, ignore_expires=True)
-    cookies = httpx.Cookies()
-    for cookie in cookie_jar:
-        cookies.set(cookie.name, cookie.value or '', domain=cookie.domain, path=cookie.path)
-    return cookies
+# Cookie handling lives in app.utils.cookies; re-exported here because handlers
+# import these names from this module.
+from app.utils.cookies import (  # noqa: F401
+    _cookie_cache_info,
+    _emitted_cookie_warnings,
+    _extract_and_save_cookies,
+    _get_cookie_file,
+    _warn_cookies_once,
+    get_all_cookies,
+    refresh_cookies_from_browser,
+)
 
 
 def _get_valid_extensions(format: str) -> list[str]:
@@ -466,6 +353,10 @@ def download_file(
         httpx.TimeoutException: If the request times out.
         ValueError: If filename cannot be determined.
     '''
+    # The per-media-type subdirectories (media/thumbnail, media/profile_pic, ...)
+    # are derived from the media type at call time, so nothing else creates them.
+    download_dir.mkdir(parents=True, exist_ok=True)
+
     # Prepare request headers and cookies
     request_headers = {
         'User-Agent': UserAgent.MAC_EDGE,
