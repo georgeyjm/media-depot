@@ -237,18 +237,19 @@ then exits - that is correct), `api`, `worker`, `douyin-downloader`.
   Host edits are visible to running containers immediately.
 - `api` and `worker` wait on `migrate` completing successfully, and on postgres
   and redis being *healthy* (not merely started).
-
-### Running locally (without Docker)
-
-1. Start PostgreSQL and Redis (`redis-server`)
-2. Create the schema: `uv run scripts/init_db.py`
-3. Start API: `uv run fastapi run`
-4. Start workers: `OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES uv run worker.py` (macOS)
-5. Douyin service: `docker compose up -d douyin-downloader`
-
-Requires `brew install libmagic` on the host for `python-magic`.
-`.env` describes host-side usage, so its URLs point at `localhost` on the
-published ports (5433 for postgres, 6380 for redis).
+- `ports:` publishes to the *host* only; it is irrelevant to container-to-container
+  traffic. Only `api` (all interfaces) and `postgres` (**`127.0.0.1` only**, for
+  manual inspection with psql/a GUI client) publish anything. Redis and
+  douyin-downloader publish nothing - reach them with
+  `docker compose exec redis redis-cli` etc. The `127.0.0.1:` prefix on postgres
+  is load-bearing: without it Docker binds `0.0.0.0` and a postgres/postgres
+  database is exposed to the LAN.
+- **Docker is the only supported way to run this.** There is no host-side setup:
+  the only thing that runs outside a container is `scripts/refresh_cookies.py`
+  (see Cookies below), which needs nothing beyond uv. In particular `libmagic`
+  is NOT a host dependency - `python-magic` is imported only by
+  `app/utils/download.py`, which runs in the container, where the Dockerfile
+  installs `libmagic1`.
 
 ### Cookies
 

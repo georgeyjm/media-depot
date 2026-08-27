@@ -76,6 +76,46 @@ copied into the image:
 docker compose up -d --build
 ```
 
+### Published ports
+
+```
+api                 0.0.0.0:8000->8000/tcp     the UI
+postgres            127.0.0.1:5433->5432/tcp   manual inspection only
+redis               6379/tcp                   not published
+douyin-downloader   5555/tcp                   not published
+```
+
+`ports:` publishes to the *host*; it has nothing to do with container-to-container
+traffic, which goes by service name over the compose network (`postgres:5432`,
+`redis:6379`, `douyin-downloader:5555`). Redis and the Douyin service therefore
+publish nothing at all - a password-less Redis has no business being reachable
+from your network.
+
+**Postgres is published on `127.0.0.1` only.** That prefix is the whole point:
+without it Docker binds `0.0.0.0` and a `postgres`/`postgres` database is
+reachable by anyone on your wifi. With it, you can point `psql` or a GUI client
+(TablePlus, Postico, DBeaver) at it from this machine and nobody else:
+
+```
+host      127.0.0.1
+port      5433
+database  media_depot
+user      postgres
+password  postgres
+```
+
+You can also reach any service without host tooling at all:
+
+```shell
+docker compose exec postgres psql -U postgres -d media_depot
+docker compose exec redis redis-cli
+docker compose exec api uv run scripts/verify_import.py
+```
+
+`api` is on all interfaces so you can open the library from a phone or tablet on
+the same network. Change it to `127.0.0.1:8000:8000` in `docker-compose.yml` to
+restrict it to this machine.
+
 ### Everyday commands
 
 ```shell
@@ -240,48 +280,6 @@ script lists exactly which ones, and they have to be added by hand:
 ```sql
 ALTER TABLE posts ADD COLUMN some_new_column TEXT;
 ```
-
-
-## Running locally (without Docker)
-
-1. Start a PostgreSQL server and a Redis server
-
-```shell
-redis-server
-```
-
-2. Create the schema
-
-```shell
-uv run scripts/init_db.py
-```
-
-3. Start the API server
-
-```shell
-uv run fastapi run
-```
-
-4. Spin up workers
-
-```shell
-uv run worker.py
-```
-Note for macOS, set `OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES`.
-
-5. Run the Douyin extraction service
-
-```shell
-docker compose up -d douyin-downloader
-```
-
-It is pulled from a published image, so this works without a local checkout.
-
-`.env` describes host-side usage, so `DATABASE_URL`/`REDIS_URL` should point at
-`localhost` on the published ports (5433 and 6380 by default). `docker-compose.yml`
-overrides them for containers.
-
-You will also need `libmagic` on the host: `brew install libmagic`.
 
 
 ## Todo

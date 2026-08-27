@@ -4,9 +4,17 @@
 #   docker compose logs -f api worker     follow logs
 #   docker compose down                   stop (data in named volumes survives)
 #
-# Ports are written as "HOST:CONTAINER". Only the host side can collide with
-# something already running on your Mac, which is why postgres and redis are
-# published on non-default host ports.
+# `ports:` publishes to the HOST and is irrelevant to container-to-container
+# traffic, which goes by service name (postgres:5432, redis:6379,
+# douyin-downloader:5555) over the compose network.
+#
+#   api       published on all interfaces - the UI, also reachable from a phone
+#   postgres  published on 127.0.0.1 only - for GUI clients / manual inspection
+#   others    not published at all
+#
+# Redis (no password) and douyin-downloader stay unpublished. To poke at them,
+# go through the container rather than a port:
+#   docker compose exec redis redis-cli
 name: media-depot
 
 # A YAML anchor: define the app's environment once, reuse it in api + worker.
@@ -50,6 +58,9 @@ services:
     environment: *app-environment
     volumes: *app-volumes
     ports:
+      # The one service meant to be reached from outside. On all interfaces so
+      # you can open the UI from a phone/tablet on the same network; change to
+      # 127.0.0.1:${API_HOST_PORT:-8000}:8000 to restrict it to this machine.
       - "${API_HOST_PORT:-8000}:8000"
     depends_on:
       migrate:
@@ -84,8 +95,6 @@ services:
   redis:
     image: redis:8-alpine
     command: redis-server --appendonly yes
-    ports:
-      - "${REDIS_HOST_PORT:-6380}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -99,7 +108,11 @@ services:
     image: postgres:18-alpine
     env_file: [.env]
     ports:
-      - "${POSTGRES_HOST_PORT:-5433}:5432"
+      # Loopback ONLY - "127.0.0.1:" is what keeps this off the network. Without
+      # that prefix Docker binds 0.0.0.0 and anyone on your wifi can reach a
+      # postgres/postgres database. Here so GUI clients (TablePlus, Postico,
+      # DBeaver) can connect for manual inspection; containers do not use it.
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5433}:5432"
     volumes:
       # postgres:18+ wants ONE mount at /var/lib/postgresql and puts the cluster
       # in a version-named subdirectory (.../18/docker). Mounting the pre-18
@@ -128,8 +141,6 @@ services:
   # and its SQLite db - see scripts/setup_douyin.sh.
   douyin-downloader:
     image: ${DOUYIN_IMAGE:-ghcr.io/joeanamier/tiktok-downloader:5.8-dev}
-    ports:
-      - "${DOUYIN_HOST_PORT:-5555}:5555"
     volumes:
       - ./services/douyin/Volume:/app/Volume
     # Keep a TTY attached: the app is a menu-driven TUI that only skips the menu
