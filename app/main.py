@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 from app.config import settings
 from app.db import engine, SessionLocal, healthcheck_db
 from app.models import Base
-from app.routers import downloads_router, posts_router, media_router
+from app.routers import downloads_router, posts_router, media_router, jobs_router
 from app.handlers import initialize_platforms
 
 
@@ -69,10 +69,17 @@ async def library():
     return FileResponse(FRONTEND_DIR / 'index.html')
 
 
+@app.get('/jobs')
+async def jobs():
+    '''Serve the frontend application (SPA routing).'''
+    return FileResponse(FRONTEND_DIR / 'index.html')
+
+
 ### API routes
 
 app.include_router(downloads_router, prefix='/api')
 app.include_router(posts_router, prefix='/api')
+app.include_router(jobs_router, prefix='/api')
 
 ### Media route (with automatic HEIF/AVIF conversion)
 

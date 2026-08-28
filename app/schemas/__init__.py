@@ -35,6 +35,8 @@ from app.schemas.job import (
     JobCreate,
     JobUpdate,
     JobResponse,
+    JobPostSummary,
+    JobListItem,
 )
 
 
@@ -71,5 +73,7 @@ __all__ = [
     'JobCreate',
     'JobUpdate',
     'JobResponse',
+    'JobPostSummary',
+    'JobListItem',
 ]
 

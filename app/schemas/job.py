@@ -4,6 +4,7 @@ from typing import Any, Optional
 from pydantic import BaseModel, ConfigDict
 
 from app.models.enums import JobStatus
+from app.schemas.platform import PlatformResponse
 
 
 class JobBase(BaseModel):
@@ -31,5 +32,20 @@ class JobResponse(JobBase):
     created_at: datetime
     updated_at: datetime
     error: Optional[dict[str, Any]] = None
-    
+
     model_config = ConfigDict(from_attributes=True)
+
+
+class JobPostSummary(BaseModel):
+    '''Slim post info for job list rows.'''
+    id: int
+    title: Optional[str] = None
+    thumbnail_path: Optional[str] = None
+    platform: PlatformResponse
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class JobListItem(JobResponse):
+    '''Job with nested post summary for the jobs list view.'''
+    post: Optional[JobPostSummary] = None

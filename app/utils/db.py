@@ -4,7 +4,7 @@ from typing import Optional, Any
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import or_, desc
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.config import settings
 from app.models import Platform, Creator, Post, PostMedia, MediaAsset, Job
@@ -401,6 +401,58 @@ def get_post(db: Session, post_id: int) -> Post | None:
         joinedload(Post.media_items).joinedload(PostMedia.media_asset),
     ).get(post_id)
     return post
+
+
+def get_partial_jobs(
+    db: Session,
+    page: int = 1,
+    per_page: int = 25,
+    status: Optional[JobStatus] = None,
+    platform: Optional[str] = None,
+    search: Optional[str] = None,
+    created_after: Optional[datetime] = None,
+    created_before: Optional[datetime] = None,
+) -> tuple[list[Job], int]:
+    '''
+    Get all Job records with pagination and optional filtering, newest first.
+
+    Search matches share text/URL, post title, and job ID ('#12' or '12').
+    Platform filtering excludes jobs that have no post attached yet.
+    '''
+    base_query = db.query(Job)
+    if platform or search:
+        base_query = base_query.outerjoin(Post, Job.post_id == Post.id)
+    if platform:
+        base_query = base_query.join(Platform, Post.platform_id == Platform.id).filter(Platform.name == platform)
+    if search:
+        term = search.strip()
+        pattern = f'%{term}%'
+        conditions = [
+            Job.share_text.ilike(pattern),
+            Job.share_url.ilike(pattern),
+            Post.title.ilike(pattern),
+        ]
+        id_term = term.lstrip('#')
+        if id_term.isdigit():
+            conditions.append(Job.id == int(id_term))
+        base_query = base_query.filter(or_(*conditions))
+    if status:
+        base_query = base_query.filter(Job.status == status)
+    if created_after:
+        base_query = base_query.filter(Job.created_at >= created_after)
+    if created_before:
+        base_query = base_query.filter(Job.created_at < created_before)
+
+    total = base_query.count()
+
+    # Post.thumbnail_path falls back to media_items, so eager-load them too
+    jobs = base_query.options(
+        joinedload(Job.post).joinedload(Post.platform),
+        joinedload(Job.post).joinedload(Post.thumbnail),
+        joinedload(Job.post).selectinload(Post.media_items).joinedload(PostMedia.media_asset),
+    ).order_by(desc(Job.created_at), desc(Job.id)).offset((page - 1) * per_page).limit(per_page).all()
+
+    return jobs, total
 
 
 def delete_orphaned_media_files(db: Session, media_assets: list[MediaAsset]) -> list[str]:

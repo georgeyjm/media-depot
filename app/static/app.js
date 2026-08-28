@@ -13,6 +13,15 @@ const state = {
         hasMore: true,
         loading: false,
     },
+    jobs: {
+        items: [],
+        page: 1,
+        hasMore: true,
+        loading: false,
+        expandedIds: new Set(),
+        filters: { status: '', platform: '' },
+    },
+    platformsList: [],
     currentPost: null,
     currentMediaIndex: 0,
     pollingIntervals: {},
@@ -50,7 +59,17 @@ const elements = {
     platformFilter: $('#platform-filter'),
     typeFilter: $('#type-filter'),
     searchInput: $('#search-input'),
-    
+
+    // Jobs
+    jobsContent: $('#jobs-content'),
+    jobsList: $('#jobs-list'),
+    jobsLoadMoreBtn: $('#jobs-load-more-btn'),
+    jobTimeFilter: $('#job-time-filter'),
+    jobSearchInput: $('#job-search-input'),
+    jobDateFrom: $('#job-date-from'),
+    jobDateTo: $('#job-date-to'),
+    jobsRefreshBtn: $('#jobs-refresh-btn'),
+
     // Media Modal
     mediaModal: $('#media-modal'),
     modalClose: $('#modal-close'),
@@ -80,14 +99,17 @@ document.addEventListener('DOMContentLoaded', () => {
     initHomeInput();
     initDrawer();
     initLibrary();
+    initJobs();
     initModals();
     initDeleteHandlers();
     loadTasksFromStorage();
-    
+
     // Handle initial page based on URL
     const path = window.location.pathname;
     if (path === '/library') {
         switchPage('library', false);
+    } else if (path === '/jobs') {
+        switchPage('jobs', false);
     }
     
     // Handle browser back/forward
@@ -151,6 +173,12 @@ function switchPage(page, updateUrl = true) {
     if (page === 'library' && state.posts.items.length === 0) {
         loadPosts(true);
         loadPlatforms();
+    }
+
+    // Load jobs data when switching to jobs page
+    if (page === 'jobs' && state.jobs.items.length === 0) {
+        loadJobs(true);
+        if (state.platformsList.length === 0) loadPlatforms();
     }
 }
 
@@ -652,6 +680,8 @@ async function loadPlatforms() {
         const response = await fetch('/api/platforms');
         const platforms = await response.json();
         
+        state.platformsList = platforms;
+
         const { platformFilter } = elements;
         platformFilter.innerHTML = '<option value="">All Platforms</option>';
         platforms.forEach((p) => {
@@ -766,6 +796,363 @@ function renderPosts() {
     });
     
     loadMoreBtn.style.display = state.posts.hasMore ? 'block' : 'none';
+}
+
+// ===== Jobs =====
+function initJobs() {
+    elements.jobsLoadMoreBtn.addEventListener('click', () => loadJobs(false));
+    elements.jobTimeFilter.addEventListener('change', () => {
+        const custom = elements.jobTimeFilter.value === 'custom';
+        elements.jobDateFrom.style.display = custom ? '' : 'none';
+        elements.jobDateTo.style.display = custom ? '' : 'none';
+        loadJobs(true);
+    });
+    elements.jobDateFrom.addEventListener('change', () => loadJobs(true));
+    elements.jobDateTo.addEventListener('change', () => loadJobs(true));
+    elements.jobsRefreshBtn.addEventListener('click', () => loadJobs(true));
+
+    // Debounced search
+    let jobSearchTimeout;
+    elements.jobSearchInput.addEventListener('input', () => {
+        clearTimeout(jobSearchTimeout);
+        jobSearchTimeout = setTimeout(() => loadJobs(true), 300);
+    });
+
+    // Infinite scroll
+    elements.jobsContent.addEventListener('scroll', handleJobsScroll);
+
+    // Delegated clicks: rows re-render, so bind once on the container
+    elements.jobsList.addEventListener('click', handleJobsListClick);
+}
+
+function handleJobsScroll() {
+    closeJobsFilterPopover();
+    const container = elements.jobsContent;
+    const { scrollTop, scrollHeight, clientHeight } = container;
+    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+
+    if (distanceFromBottom < 300 && !state.jobs.loading && state.jobs.hasMore) {
+        loadJobs(false);
+    }
+}
+
+async function loadJobs(reset = false) {
+    if (state.jobs.loading) return;
+
+    if (reset) {
+        state.jobs.page = 1;
+        state.jobs.items = [];
+        state.jobs.hasMore = true;
+        state.jobs.expandedIds.clear();
+    }
+
+    if (!state.jobs.hasMore) return;
+
+    state.jobs.loading = true;
+
+    try {
+        const params = new URLSearchParams({
+            page: state.jobs.page.toString(),
+            per_page: '25',
+        });
+
+        const { status, platform } = state.jobs.filters;
+        if (status) params.append('status', status);
+        if (platform) params.append('platform', platform);
+
+        const search = elements.jobSearchInput.value.trim();
+        if (search) params.append('search', search);
+
+        const TIME_PRESETS_MS = {
+            minute: 60 * 1000,
+            hour: 60 * 60 * 1000,
+            day: 24 * 60 * 60 * 1000,
+            week: 7 * 24 * 60 * 60 * 1000,
+            month: 30 * 24 * 60 * 60 * 1000,
+        };
+        const preset = elements.jobTimeFilter.value;
+        if (preset === 'custom') {
+            const dateFrom = elements.jobDateFrom.value;
+            const dateTo = elements.jobDateTo.value;
+            // Local-midnight bounds; the "to" day is included in full
+            if (dateFrom) params.append('created_after', new Date(`${dateFrom}T00:00:00`).toISOString());
+            if (dateTo) {
+                const before = new Date(`${dateTo}T00:00:00`);
+                before.setDate(before.getDate() + 1);
+                params.append('created_before', before.toISOString());
+            }
+        } else if (preset) {
+            params.append('created_after', new Date(Date.now() - TIME_PRESETS_MS[preset]).toISOString());
+        }
+
+        const response = await fetch(`/api/jobs?${params}`);
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('Load jobs error response:', errorText);
+            showNotification('Failed to load jobs', 'error');
+            return;
+        }
+
+        const data = await response.json();
+
+        state.jobs.items = reset ? data.jobs : [...state.jobs.items, ...data.jobs];
+        state.jobs.hasMore = data.has_more;
+        state.jobs.page++;
+
+        renderJobs();
+
+    } catch (err) {
+        console.error('Load jobs error:', err);
+        showNotification('Failed to load jobs', 'error');
+    } finally {
+        state.jobs.loading = false;
+    }
+}
+
+function renderJobs() {
+    const { jobsList, jobsLoadMoreBtn } = elements;
+
+    const bodyRows = state.jobs.items.length === 0
+        ? `
+            <tr><td colspan="7">
+                <div class="posts-empty">
+                    <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                        <line x1="8" y1="6" x2="21" y2="6"/>
+                        <line x1="8" y1="12" x2="21" y2="12"/>
+                        <line x1="8" y1="18" x2="21" y2="18"/>
+                        <line x1="3" y1="6" x2="3.01" y2="6"/>
+                        <line x1="3" y1="12" x2="3.01" y2="12"/>
+                        <line x1="3" y1="18" x2="3.01" y2="18"/>
+                    </svg>
+                    <p>No jobs found</p>
+                </div>
+            </td></tr>
+        `
+        : state.jobs.items.map(renderJobRow).join('');
+
+    jobsList.innerHTML = `
+        <table class="jobs-table">
+            <thead>
+                <tr>
+                    <th class="col-thumb"></th>
+                    <th class="col-id">ID</th>
+                    <th class="col-title">Title</th>
+                    <th class="col-status">Status ${renderThFilterBtn('status')}</th>
+                    <th class="col-platform">Platform ${renderThFilterBtn('platform')}</th>
+                    <th class="col-time">Added</th>
+                    <th class="col-chevron"></th>
+                </tr>
+            </thead>
+            <tbody>${bodyRows}</tbody>
+        </table>
+    `;
+    jobsLoadMoreBtn.style.display = (state.jobs.items.length && state.jobs.hasMore) ? 'block' : 'none';
+}
+
+function renderThFilterBtn(type) {
+    const active = state.jobs.filters[type] !== '';
+    return `
+        <button class="th-filter-btn${active ? ' active' : ''}" data-filter-type="${type}" title="Filter by ${type}">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="${active ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
+                <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+            </svg>
+        </button>
+    `;
+}
+
+function getJobsFilterOptions(type) {
+    if (type === 'status') {
+        return [
+            ['', 'All Statuses'],
+            ['pending', 'Pending'],
+            ['processing', 'Processing'],
+            ['completed', 'Completed'],
+            ['failed', 'Failed'],
+            ['canceled', 'Canceled'],
+        ];
+    }
+    return [
+        ['', 'All Platforms'],
+        ...state.platformsList.map((p) => [p.name, p.display_name]),
+    ];
+}
+
+function openJobsFilterPopover(btn, type) {
+    // Clicking the same funnel again toggles the popover closed
+    const existing = $('.jobs-filter-popover');
+    if (existing && existing.dataset.filterType === type) {
+        closeJobsFilterPopover();
+        return;
+    }
+    closeJobsFilterPopover();
+
+    const current = state.jobs.filters[type];
+    const popover = document.createElement('div');
+    popover.className = 'jobs-filter-popover';
+    popover.dataset.filterType = type;
+    popover.innerHTML = getJobsFilterOptions(type).map(([value, label]) => `
+        <button class="jobs-filter-option${value === current ? ' selected' : ''}" data-value="${escapeHtml(value)}">
+            ${escapeHtml(label)}
+        </button>
+    `).join('');
+
+    popover.addEventListener('click', (e) => {
+        const option = e.target.closest('.jobs-filter-option');
+        if (!option) return;
+        state.jobs.filters[type] = option.dataset.value;
+        closeJobsFilterPopover();
+        loadJobs(true);
+    });
+
+    document.body.appendChild(popover);
+    const rect = btn.getBoundingClientRect();
+    popover.style.top = `${rect.bottom + 4}px`;
+    popover.style.left = `${Math.min(rect.left, window.innerWidth - popover.offsetWidth - 8)}px`;
+
+    // Close on any click outside (deferred so the opening click doesn't trigger it)
+    setTimeout(() => {
+        document.addEventListener('click', handleJobsPopoverOutsideClick);
+    }, 0);
+}
+
+function handleJobsPopoverOutsideClick(e) {
+    if (!e.target.closest('.jobs-filter-popover')) {
+        closeJobsFilterPopover();
+    }
+}
+
+function closeJobsFilterPopover() {
+    const popover = $('.jobs-filter-popover');
+    if (popover) popover.remove();
+    document.removeEventListener('click', handleJobsPopoverOutsideClick);
+}
+
+function renderJobRow(job) {
+    const expanded = state.jobs.expandedIds.has(job.id);
+    const post = job.post;
+
+    const thumb = post?.thumbnail_path
+        ? `<img class="job-thumb" src="/media/${post.thumbnail_path}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`
+        : '<div class="job-thumb job-thumb-placeholder"></div>';
+    const title = post?.title || job.share_url || job.share_text;
+
+    return `
+        <tr class="job-summary-tr${expanded ? ' expanded' : ''}" data-job-id="${job.id}">
+            <td class="col-thumb">${thumb}</td>
+            <td class="col-id">#${job.id}</td>
+            <td class="col-title" title="${escapeHtml(title)}">${escapeHtml(title)}</td>
+            <td class="col-status"><span class="job-status-badge ${job.status}">${job.status}</span></td>
+            <td class="col-platform">${post ? `<span class="platform-badge">${escapeHtml(post.platform.display_name)}</span>` : ''}</td>
+            <td class="col-time">${formatTime(job.created_at)}</td>
+            <td class="col-chevron">
+                <svg class="job-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="6 9 12 15 18 9"/>
+                </svg>
+            </td>
+        </tr>
+        <tr class="job-details-tr${expanded ? ' open' : ''}">
+            <td class="job-row-details" colspan="7">${expanded ? renderJobDetails(job) : ''}</td>
+        </tr>
+    `;
+}
+
+function renderJobDetails(job) {
+    const fields = `
+        <div class="job-detail-field">
+            <span class="job-detail-label">Share text</span>
+            <div class="job-detail-value">${escapeHtml(job.share_text)}</div>
+        </div>
+        <div class="job-detail-field">
+            <span class="job-detail-label">URL</span>
+            <div class="job-detail-value"><a href="${escapeHtml(job.share_url)}" target="_blank" rel="noopener">${escapeHtml(job.share_url)}</a></div>
+        </div>
+        <div class="job-detail-field">
+            <span class="job-detail-label">Created</span>
+            <div class="job-detail-value">${new Date(job.created_at).toLocaleString()}</div>
+        </div>
+        <div class="job-detail-field">
+            <span class="job-detail-label">Updated</span>
+            <div class="job-detail-value">${new Date(job.updated_at).toLocaleString()}</div>
+        </div>
+    `;
+
+    const viewBtn = (job.post_id && job.status === 'completed')
+        ? `<button class="btn-secondary job-view-media-btn" data-post-id="${job.post_id}">View media</button>`
+        : '';
+
+    return fields + viewBtn + renderJobError(job.error);
+}
+
+function renderJobError(error) {
+    if (!error || Object.keys(error).length === 0) return '';
+
+    // Shape 1: {"error": "Post is non-existent"} - not a program error
+    if (typeof error.error === 'string') {
+        return `<div class="job-error-message">${escapeHtml(error.error)}</div>`;
+    }
+
+    // Shape 2: {"attempts": [{type, message, traceback}, ...]} - one entry per retry
+    if (Array.isArray(error.attempts)) {
+        const attempts = error.attempts.map((attempt, i) => `
+            <details class="job-attempt">
+                <summary>Attempt ${i + 1} · ${escapeHtml(attempt.type || 'Error')}</summary>
+                <div class="job-attempt-body">
+                    <div class="job-attempt-message">${escapeHtml(attempt.message || '')}</div>
+                    ${attempt.traceback ? `<pre class="job-traceback">${escapeHtml(attempt.traceback)}</pre>` : ''}
+                </div>
+            </details>
+        `).join('');
+        return `<div class="job-attempts">${attempts}</div>`;
+    }
+
+    // Unknown shape fallback
+    return `<pre class="job-traceback">${escapeHtml(JSON.stringify(error, null, 2))}</pre>`;
+}
+
+function handleJobsListClick(e) {
+    const filterBtn = e.target.closest('.th-filter-btn');
+    if (filterBtn) {
+        openJobsFilterPopover(filterBtn, filterBtn.dataset.filterType);
+        return;
+    }
+
+    const viewBtn = e.target.closest('.job-view-media-btn');
+    if (viewBtn) {
+        openPostModal(parseInt(viewBtn.dataset.postId));
+        return;
+    }
+
+    // Only the summary row toggles - clicks in the details row
+    // (e.g. selecting traceback text) never collapse it
+    const summary = e.target.closest('.job-summary-tr');
+    if (!summary) return;
+
+    toggleJobRow(parseInt(summary.dataset.jobId), summary);
+}
+
+function toggleJobRow(jobId, summaryTr) {
+    const detailsTr = summaryTr.nextElementSibling;
+    if (state.jobs.expandedIds.has(jobId)) {
+        state.jobs.expandedIds.delete(jobId);
+        summaryTr.classList.remove('expanded');
+        detailsTr.classList.remove('open');
+    } else {
+        // Only one row may be expanded at a time
+        const prevExpanded = elements.jobsList.querySelector('.job-summary-tr.expanded');
+        if (prevExpanded && prevExpanded !== summaryTr) {
+            prevExpanded.classList.remove('expanded');
+            prevExpanded.nextElementSibling.classList.remove('open');
+        }
+        state.jobs.expandedIds.clear();
+        state.jobs.expandedIds.add(jobId);
+        const job = state.jobs.items.find((j) => j.id === jobId);
+        if (job) {
+            detailsTr.querySelector('.job-row-details').innerHTML = renderJobDetails(job);
+        }
+        summaryTr.classList.add('expanded');
+        detailsTr.classList.add('open');
+    }
 }
 
 // ===== Delete Functionality =====
