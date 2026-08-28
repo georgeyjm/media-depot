@@ -42,7 +42,9 @@ def main():
     print(f'Starting worker for queue: {queue.name}')
     print('Press Ctrl+C to stop the worker')
     try:
-        worker.work()
+        # with_scheduler is required for Retry(interval=...) to work: retries
+        # land in the ScheduledJobRegistry and only the scheduler re-enqueues them
+        worker.work(with_scheduler=True)
     except KeyboardInterrupt:
         print('\nWorker stopped by user')
         sys.exit(0)

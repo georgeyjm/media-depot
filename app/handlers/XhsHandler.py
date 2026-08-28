@@ -25,7 +25,9 @@ class XhsHandler(BaseHandler):
         r'https?://(?:www\.)?xiaohongshu\.com/([a-zA-Z]+)/(?:[a-zA-Z]+/)?([a-zA-Z0-9]+)/?\??',
     )
     SHORT_URL_PATTERNS = (
-        r'https?://xhslink\.com/[a-zA-Z]/[a-zA-Z0-9]+/?',  # Share URL
+        # Share URL
+        r'https?://xhslink\.com/[a-zA-Z]/[a-zA-Z0-9]+/?',
+        r'https?://xhslink\.cn/[a-zA-Z]/[a-zA-Z0-9]+/?',
     )
     USE_COOKIES = True
     API_ROOT = settings.xhs_api_root
