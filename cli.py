@@ -439,14 +439,22 @@ def text_block(text: str) -> str:
     return f'<div>{html.escape(text)}</div>'
 
 
+# A blank line that keeps the body font. A bare <div><br></div> has no
+# character run, so when Notes re-imports the body it inherits the style of
+# the preceding paragraph — right after the title that means title-sized
+# blanks. A &nbsp; styled at the body size (14px) anchors a real run; Notes
+# then serializes it back as a plain space, styled normally.
+BLANK_LINE = '<div><span style="font-size: 14px">&nbsp;</span></div>'
+
+
 def insert_failed_lines(body: str, lines: list[str]) -> str:
-    '''Insert `lines` right after the FAILED marker, appending the marker to
-    the end of the note if it does not exist yet.'''
-    new_blocks = '\n'.join(text_block(line) for line in lines)
+    '''Insert `lines` right after the FAILED marker, a blank line before each
+    entry, appending the marker to the end of the note if missing.'''
+    new_blocks = ''.join(f'\n{BLANK_LINE}\n{text_block(line)}' for line in lines)
     match = FAILED_RE.search(body)
     if match is None:
-        return f'{body}\n<div><br></div>\n{text_block(FAILED_MARKER)}\n{new_blocks}'
-    return f'{body[:match.end()]}\n{new_blocks}{body[match.end():]}'
+        return f'{body}\n{BLANK_LINE}\n{text_block(FAILED_MARKER)}{new_blocks}'
+    return f'{body[:match.end()]}{new_blocks}{body[match.end():]}'
 
 
 def add_failed_line(title: str, line: str) -> None:
@@ -501,13 +509,12 @@ def scan_note(title: str, state: dict[str, dict]) -> None:
     new_failed: list[str] = []  # submissions that came back already failed
     submitted_any = False       # only a real submission justifies a rewrite
     api_down = False
-    blank_count = 0
 
     for raw, text in zip(blocks[1:], texts[1:]):
         line = normalize(text)
-        if api_down or not line:
-            if not line:
-                blank_count += 1
+        if not line:
+            continue  # drop blank inbox lines; the padding below replaces them
+        if api_down:
             kept.append(raw)
             continue
 
@@ -544,10 +551,9 @@ def scan_note(title: str, state: dict[str, dict]) -> None:
     if not submitted_any:
         return  # nothing was sent to the API, leave the note untouched
 
-    # Keep at least 5 blank lines between the title and the END marker. A
-    # visible blank line in a Notes body is a <div><br></div> block; raw
-    # newlines are just source whitespace and render as nothing.
-    padding = ['<div><br></div>'] * max(0, 5 - blank_count)
+    # Rebuild the inbox with a fresh set of exactly 5 blank lines (old blanks
+    # were dropped above, so they don't accumulate across scans).
+    padding = [BLANK_LINE] * 5
     new_body = '\n'.join([blocks[0], *kept, *padding, body[end_match.start():]])
     if new_failed:
         new_body = insert_failed_lines(new_body, new_failed)
