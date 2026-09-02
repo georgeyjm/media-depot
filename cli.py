@@ -299,7 +299,7 @@ def calculate_job_statistics(jobs: list[dict], active_queue: list) -> dict[str, 
 NOTES_DEFAULT_TITLE = '存档'
 NOTES_STATE_FILE = Path(__file__).resolve().parent / '.cache' / 'notes_inbox_state.json'
 NOTES_SCAN_INTERVAL = 120   # read the note every 2 minutes
-NOTES_POLL_INTERVAL = 60    # poll job statuses every minute
+NOTES_POLL_INTERVAL = 30    # poll job statuses every 30 seconds
 
 FAILED_MARKER = '========== FAILED =========='  # canonical form, used when creating
 
@@ -499,16 +499,13 @@ def scan_note(title: str, state: dict[str, dict]) -> None:
 
     kept: list[str] = []        # lines left in the inbox (API rejected or down)
     new_failed: list[str] = []  # submissions that came back already failed
-    changed = False
+    submitted_any = False       # only a real submission justifies a rewrite
     api_down = False
 
     for raw, text in zip(blocks[1:], texts[1:]):
         line = normalize(text)
-        if api_down:
+        if api_down or not line:
             kept.append(raw)
-            continue
-        if not line:
-            changed = True  # drop blank inbox lines
             continue
 
         try:
@@ -526,7 +523,7 @@ def scan_note(title: str, state: dict[str, dict]) -> None:
                 api_down = True  # server trouble, not this line's fault
             continue
 
-        changed = True
+        submitted_any = True
         job_id = job['id']
         status = job.get('status')
         log(f'→ Submitted job {job_id} ({status}): {line[:80]}')
@@ -541,10 +538,10 @@ def scan_note(title: str, state: dict[str, dict]) -> None:
             }
             save_notes_state(state)
 
-    if not changed:
-        return
+    if not submitted_any:
+        return  # nothing was sent to the API, leave the note untouched
 
-    new_body = '\n'.join([blocks[0], *kept, body[end_match.start():]])
+    new_body = blocks[0] + '\n' * 4 + '\n'.join([*kept, body[end_match.start():]])
     if new_failed:
         new_body = insert_failed_lines(new_body, new_failed)
     try:
