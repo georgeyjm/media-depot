@@ -501,10 +501,13 @@ def scan_note(title: str, state: dict[str, dict]) -> None:
     new_failed: list[str] = []  # submissions that came back already failed
     submitted_any = False       # only a real submission justifies a rewrite
     api_down = False
+    blank_count = 0
 
     for raw, text in zip(blocks[1:], texts[1:]):
         line = normalize(text)
         if api_down or not line:
+            if not line:
+                blank_count += 1
             kept.append(raw)
             continue
 
@@ -541,7 +544,11 @@ def scan_note(title: str, state: dict[str, dict]) -> None:
     if not submitted_any:
         return  # nothing was sent to the API, leave the note untouched
 
-    new_body = blocks[0] + '\n' * 4 + '\n'.join([*kept, body[end_match.start():]])
+    # Keep at least 5 blank lines between the title and the END marker. A
+    # visible blank line in a Notes body is a <div><br></div> block; raw
+    # newlines are just source whitespace and render as nothing.
+    padding = ['<div><br></div>'] * max(0, 5 - blank_count)
+    new_body = '\n'.join([blocks[0], *kept, *padding, body[end_match.start():]])
     if new_failed:
         new_body = insert_failed_lines(new_body, new_failed)
     try:
