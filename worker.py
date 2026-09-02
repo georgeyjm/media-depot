@@ -19,7 +19,7 @@ import sys
 
 from rq import Worker
 
-from app.db import SessionLocal
+from app.db import SessionLocal, engine
 from app.handlers import initialize_platforms
 from app.utils.queue import get_redis_connection, get_queue
 
@@ -34,6 +34,15 @@ def main():
         initialize_platforms(db)
     finally:
         db.close()
+
+    # db.close() returns the connection to the pool but leaves the socket open,
+    # and RQ forks a child per job. Without this, every child inherits - and
+    # shares - that one PostgreSQL connection, so psycopg's prepared-statement
+    # names collide across jobs:
+    #   DuplicatePreparedStatement: prepared statement "_pg3_0" already exists
+    # Disposing the pool here leaves the parent with no connections to inherit,
+    # so each child opens its own.
+    engine.dispose()
 
     redis_conn = get_redis_connection()
     queue = get_queue()
