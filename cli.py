@@ -1,8 +1,12 @@
 import argparse
+import html
 import json
+import re
+import subprocess
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Optional
 
@@ -272,6 +276,345 @@ def calculate_job_statistics(jobs: list[dict], active_queue: list) -> dict[str, 
         'processing': sum(1 for job in jobs if job.get('status') == 'processing'),
         'in_queue': len(active_queue)
     }
+
+
+# ============================================================================
+# Apple Notes inbox (--notes / --notes-once)
+#
+# Watches a note and feeds its lines to the API. Runs ON THE HOST only: it
+# drives Notes.app through AppleScript, and the first run triggers a macOS
+# Automation permission prompt (allow your terminal to control Notes).
+#
+# Every 2 minutes the note is read; each non-empty line between the title and
+# the END marker line is submitted as share text and deleted from the note.
+# Marker lines are "===== END =====" / "===== FAILED =====" with 5-20 equal
+# signs per side. Submitted jobs are persisted to .cache/notes_inbox_state.json
+# (so they survive a restart) and polled every minute; a job that ends in
+# "failed" or "canceled" gets its share text re-inserted right after the
+# FAILED marker (appended to the note if missing). Lines the API rejects
+# (HTTP 400 or any other error) stay in the inbox and are retried next scan.
+# Everything from the END marker onward is written back untouched.
+# ============================================================================
+
+NOTES_DEFAULT_TITLE = '存档'
+NOTES_STATE_FILE = Path(__file__).resolve().parent / '.cache' / 'notes_inbox_state.json'
+NOTES_SCAN_INTERVAL = 120   # read the note every 2 minutes
+NOTES_POLL_INTERVAL = 60    # poll job statuses every minute
+
+FAILED_MARKER = '========== FAILED =========='  # canonical form, used when creating
+
+TERMINAL_OK = {'completed'}
+TERMINAL_BAD = {'failed', 'canceled'}
+
+
+def _marker_re(word: str) -> re.Pattern[str]:
+    '''Match a whole top-level <div> line reading "===== WORD =====",
+    with 5-20 equal signs per side and flexible spacing.'''
+    sp = r'(?:\s|&nbsp;)*'
+    return re.compile(
+        rf'<div[^>]*>(?:<[^>]+>)*{sp}={{5,20}}{sp}{word}{sp}={{5,20}}{sp}(?:<[^>]+>)*</div>'
+    )
+
+
+END_RE = _marker_re('END')
+FAILED_RE = _marker_re('FAILED')
+
+
+def log(msg: str) -> None:
+    print(f'[{datetime.now():%Y-%m-%d %H:%M:%S}] {msg}', flush=True)
+
+
+# ---- Notes.app access ------------------------------------------------------
+
+READ_BODY_SCRIPT = '''
+on run argv
+    tell application "Notes"
+        set matches to notes whose name is (item 1 of argv)
+        if (count of matches) is 0 then error "note not found"
+        return body of item 1 of matches
+    end tell
+end run
+'''
+
+WRITE_BODY_SCRIPT = '''
+on run argv
+    tell application "Notes"
+        set matches to notes whose name is (item 1 of argv)
+        if (count of matches) is 0 then error "note not found"
+        set body of item 1 of matches to (item 2 of argv)
+    end tell
+end run
+'''
+
+
+def read_note_body(title: str) -> str:
+    result = subprocess.run(
+        ['osascript', '-e', READ_BODY_SCRIPT, title],
+        capture_output=True, text=True, timeout=60,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f'reading note failed: {result.stderr.strip()}')
+    return result.stdout.rstrip('\n')
+
+
+def write_note_body(title: str, body: str):
+    result = subprocess.run(
+        ['osascript', '-e', WRITE_BODY_SCRIPT, title, body],
+        capture_output=True, text=True, timeout=60,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f'writing note failed: {result.stderr.strip()}')
+
+
+# ---- Note body parsing -----------------------------------------------------
+# A Notes body is HTML whose top-level children are one block per visual line
+# (usually <div>line</div>, <div><br></div> for a blank line). Only the inbox
+# section — before the END marker — is block-split; everything from the END
+# marker onward is carried through as a raw string, untouched.
+
+VOID_TAGS = {
+    'br', 'img', 'hr', 'meta', 'input', 'area', 'base', 'col',
+    'embed', 'link', 'param', 'source', 'track', 'wbr',
+}
+
+
+class _BlockSplitter(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.blocks: list[str] = []   # raw HTML of each top-level block
+        self.texts: list[str] = []    # plain text of each block
+        self._depth = 0
+        self._html: list[str] = []
+        self._text: list[str] = []
+
+    def _flush(self) -> None:
+        raw = ''.join(self._html)
+        if raw.strip():
+            self.blocks.append(raw)
+            self.texts.append(''.join(self._text))
+        self._html, self._text = [], []
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        if self._depth == 0:
+            self._flush()
+        self._html.append(self.get_starttag_text() or f'<{tag}>')
+        if tag not in VOID_TAGS:
+            self._depth += 1
+
+    def handle_startendtag(self, tag: str, attrs) -> None:
+        if self._depth == 0:
+            self._flush()
+        self._html.append(self.get_starttag_text() or f'<{tag}/>')
+        if self._depth == 0:
+            self._flush()
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in VOID_TAGS:
+            return
+        self._html.append(f'</{tag}>')
+        if self._depth > 0:
+            self._depth -= 1
+            if self._depth == 0:
+                self._flush()
+
+    def handle_data(self, data: str) -> None:
+        self._html.append(html.escape(data, quote=False))
+        self._text.append(data)
+
+
+def split_blocks(body: str) -> tuple[list[str], list[str]]:
+    '''Return ([raw_html_block, ...], [plain_text_block, ...]).'''
+    parser = _BlockSplitter()
+    parser.feed(body)
+    parser.close()
+    parser._flush()
+    return parser.blocks, parser.texts
+
+
+def normalize(text: str) -> str:
+    return text.replace('\xa0', ' ').strip()
+
+
+def text_block(text: str) -> str:
+    return f'<div>{html.escape(text)}</div>'
+
+
+def insert_failed_lines(body: str, lines: list[str]) -> str:
+    '''Insert `lines` right after the FAILED marker, appending the marker to
+    the end of the note if it does not exist yet.'''
+    new_blocks = '\n'.join(text_block(line) for line in lines)
+    match = FAILED_RE.search(body)
+    if match is None:
+        return f'{body}\n<div><br></div>\n{text_block(FAILED_MARKER)}\n{new_blocks}'
+    return f'{body[:match.end()]}\n{new_blocks}{body[match.end():]}'
+
+
+def add_failed_line(title: str, line: str) -> None:
+    write_note_body(title, insert_failed_lines(read_note_body(title), [line]))
+
+
+# ---- Persistent job state --------------------------------------------------
+
+def load_notes_state() -> dict[str, dict]:
+    '''Pending jobs, keyed by job id (as a string): {share_text, submitted_at}.'''
+    if not NOTES_STATE_FILE.exists():
+        return {}
+    try:
+        state = json.loads(NOTES_STATE_FILE.read_text(encoding='utf-8'))
+        if isinstance(state, dict):
+            return state
+    except (json.JSONDecodeError, OSError) as e:
+        log(f'⚠ Could not read state file, starting empty: {e}')
+    return {}
+
+
+def save_notes_state(state: dict[str, dict]) -> None:
+    NOTES_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = NOTES_STATE_FILE.with_suffix('.json.tmp')
+    tmp.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding='utf-8')
+    tmp.replace(NOTES_STATE_FILE)
+
+
+# ---- Scan and poll cycles --------------------------------------------------
+
+def scan_note(title: str, state: dict[str, dict]) -> None:
+    '''Drain the inbox: submit each non-empty line between the title and the
+    END marker, then rebuild the note as
+    title + kept lines + everything from the END marker on (untouched),
+    with any immediately-failed submissions inserted after the FAILED marker.'''
+    try:
+        body = read_note_body(title)
+    except (RuntimeError, subprocess.TimeoutExpired) as e:
+        log(f'⚠ {e}')
+        return
+
+    end_match = END_RE.search(body)
+    if end_match is None:
+        log('⚠ Note has no END marker line; skipping scan')
+        return
+
+    blocks, texts = split_blocks(body[:end_match.start()])
+    if len(blocks) < 2:
+        return  # nothing between the title and the END marker
+
+    kept: list[str] = []        # lines left in the inbox (API rejected or down)
+    new_failed: list[str] = []  # submissions that came back already failed
+    changed = False
+    api_down = False
+
+    for raw, text in zip(blocks[1:], texts[1:]):
+        line = normalize(text)
+        if api_down:
+            kept.append(raw)
+            continue
+        if not line:
+            changed = True  # drop blank inbox lines
+            continue
+
+        try:
+            job = request_download_job(line)
+        except httpx.RequestError as e:
+            log(f'⚠ API unreachable, leaving rest of inbox for next scan: {e}')
+            kept.append(raw)
+            api_down = True
+            continue
+        except httpx.HTTPStatusError as e:
+            log(f'⚠ API error {e.response.status_code} for "{line[:80]}", '
+                'leaving line in place')
+            kept.append(raw)
+            if e.response.status_code != 400:
+                api_down = True  # server trouble, not this line's fault
+            continue
+
+        changed = True
+        job_id = job['id']
+        status = job.get('status')
+        log(f'→ Submitted job {job_id} ({status}): {line[:80]}')
+
+        if status in TERMINAL_BAD:
+            log(f'✗ Job {job_id} already {status}, moving to FAILED: {line[:80]}')
+            new_failed.append(line)
+        elif status not in TERMINAL_OK:
+            state[str(job_id)] = {
+                'share_text': line,
+                'submitted_at': datetime.now(timezone.utc).isoformat(),
+            }
+            save_notes_state(state)
+
+    if not changed:
+        return
+
+    new_body = '\n'.join([blocks[0], *kept, body[end_match.start():]])
+    if new_failed:
+        new_body = insert_failed_lines(new_body, new_failed)
+    try:
+        write_note_body(title, new_body)
+    except (RuntimeError, subprocess.TimeoutExpired) as e:
+        log(f'⚠ {e}; note not updated, submitted lines are still in the inbox '
+            '(resubmitting them next scan is deduplicated by the API)')
+
+
+def poll_note_jobs(title: str, state: dict[str, dict]) -> None:
+    for job_id in list(state):
+        share = state[job_id]['share_text']
+        try:
+            job = poll_job_status(int(job_id))
+        except httpx.RequestError as e:
+            log(f'⚠ API unreachable while polling: {e}')
+            return
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                log(f'✗ Job {job_id} vanished from API, moving to FAILED: {share[:80]}')
+                add_failed_line(title, share)
+                del state[job_id]
+                save_notes_state(state)
+            else:
+                log(f'⚠ API error {e.response.status_code} polling job {job_id}')
+            continue
+
+        status = job.get('status')
+        if status in TERMINAL_OK:
+            log(f'✓ Job {job_id} completed: {share[:80]}')
+            del state[job_id]
+            save_notes_state(state)
+        elif status in TERMINAL_BAD:
+            log(f'✗ Job {job_id} {status}, moving to FAILED: {share[:80]}')
+            try:
+                add_failed_line(title, share)
+            except (RuntimeError, subprocess.TimeoutExpired) as e:
+                log(f'⚠ {e}; will retry writing FAILED line next poll')
+                continue
+            del state[job_id]
+            save_notes_state(state)
+
+
+def watch_notes(title: str, once: bool = False) -> None:
+    state = load_notes_state()
+    if state:
+        log(f'Resuming {len(state)} pending job(s) from {NOTES_STATE_FILE}')
+    log(f'Watching note "{title}" via {API_ROOT_URL} '
+        f'(scan every {NOTES_SCAN_INTERVAL}s, poll every {NOTES_POLL_INTERVAL}s)')
+
+    if once:
+        scan_note(title, state)
+        poll_note_jobs(title, state)
+        return
+
+    next_scan = 0.0
+    next_poll = 0.0
+    try:
+        while True:
+            now = time.monotonic()
+            if now >= next_scan:
+                scan_note(title, state)
+                next_scan = time.monotonic() + NOTES_SCAN_INTERVAL
+            if state and now >= next_poll:
+                poll_note_jobs(title, state)
+                next_poll = time.monotonic() + NOTES_POLL_INTERVAL
+            deadlines = [next_scan] + ([next_poll] if state else [])
+            time.sleep(max(1.0, min(deadlines) - time.monotonic()))
+    except KeyboardInterrupt:
+        print()
 
 
 # ============================================================================
@@ -577,6 +920,8 @@ def batch_download_from_file(
 
 def main():
     '''Main CLI entry point.'''
+    global API_ROOT_URL
+
     parser = argparse.ArgumentParser(
         description='Media Depot CLI - Download media from share strings',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -590,6 +935,10 @@ Examples:
   
   # Use a custom API server URL
   python cli.py --share 'https://...' --base-url 'http://localhost:9000'
+
+  # Watch the Apple Notes inbox note (host only, macOS)
+  python cli.py --notes
+  python cli.py --notes-once --notes-title 存档
         '''
     )
     
@@ -623,25 +972,51 @@ Examples:
         action='store_true',
         help='Also retry jobs with status "failed" or "error"'
     )
-    
+
+    parser.add_argument(
+        '--notes',
+        action='store_true',
+        help='Continuously watch the Apple Notes inbox note and submit its lines'
+    )
+
+    parser.add_argument(
+        '--notes-once',
+        action='store_true',
+        help='Run a single Notes scan + poll cycle and exit'
+    )
+
+    parser.add_argument(
+        '--notes-title',
+        type=str,
+        default=NOTES_DEFAULT_TITLE,
+        help=f'Title of the Apple Notes note to watch (default: {NOTES_DEFAULT_TITLE})'
+    )
+
     args = parser.parse_args()
-    
-    # Validate that exactly one of --share or --file is provided
-    if args.share and args.file:
-        print('Error: Cannot specify both --share and --file', file=sys.stderr)
+
+    # Validate that exactly one mode is selected
+    modes = [bool(args.share), bool(args.file), args.notes, args.notes_once]
+    if sum(modes) > 1:
+        print('Error: --share, --file, --notes and --notes-once are mutually exclusive',
+              file=sys.stderr)
         sys.exit(1)
-    
-    if not args.share and not args.file:
-        print('Error: Must specify either --share or --file', file=sys.stderr)
+
+    if sum(modes) == 0:
+        print('Error: Must specify one of --share, --file, --notes or --notes-once',
+              file=sys.stderr)
         parser.print_help()
         sys.exit(1)
-    
+
+    API_ROOT_URL = args.base_url
+
     # Execute the appropriate function
     if args.share:
         success = download_share(args.share)
         sys.exit(0 if success else 1)
-    else:
+    elif args.file:
         batch_download_from_file(args.file, wait=not args.no_wait, retry=args.retry)
+    else:
+        watch_notes(args.notes_title, once=args.notes_once)
 
 
 if __name__ == '__main__':
