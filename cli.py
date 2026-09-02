@@ -457,8 +457,43 @@ def insert_failed_lines(body: str, lines: list[str]) -> str:
     return f'{body[:match.end()]}{new_blocks}{body[match.end():]}'
 
 
+def parse_head(body: str) -> tuple[re.Match, list[str], list[str]] | None:
+    '''Split off the inbox section: (END marker match, head blocks, head
+    texts), where blocks[0] is the title line. None if the END marker is
+    missing — without the boundary the note must not be rewritten.'''
+    end_match = END_RE.search(body)
+    if end_match is None:
+        return None
+    blocks, texts = split_blocks(body[:end_match.start()])
+    if not blocks:
+        return None
+    return end_match, blocks, texts
+
+
+def rebuild_body(body: str, end_match: re.Match, title_text: str,
+                 inbox_lines: list[str]) -> str:
+    '''Canonical title + inbox_lines + 5 blank lines + everything from the END
+    marker on, untouched.
+
+    Every write must rebuild the head this way rather than echoing it back
+    verbatim: Notes serializes the title with a trailing <br> inside its div,
+    and re-importing that splits it into an extra empty paragraph styled at
+    title size (24px bold). Our nbsp blanks likewise degrade to bare
+    <div><br></div> after one round trip. A fresh <h1> title and fresh
+    BLANK_LINE blanks import cleanly every time.'''
+    title_block = f'<div><h1>{html.escape(title_text)}</h1></div>'
+    padding = [BLANK_LINE] * 5
+    return '\n'.join([title_block, *inbox_lines, *padding, body[end_match.start():]])
+
+
 def add_failed_line(title: str, line: str) -> None:
-    write_note_body(title, insert_failed_lines(read_note_body(title), [line]))
+    body = read_note_body(title)
+    parsed = parse_head(body)
+    if parsed is not None:
+        end_match, blocks, texts = parsed
+        inbox = [raw for raw, text in zip(blocks[1:], texts[1:]) if normalize(text)]
+        body = rebuild_body(body, end_match, normalize(texts[0]), inbox)
+    write_note_body(title, insert_failed_lines(body, [line]))
 
 
 # ---- Persistent job state --------------------------------------------------
@@ -496,12 +531,11 @@ def scan_note(title: str, state: dict[str, dict]) -> None:
         log(f'⚠ {e}')
         return
 
-    end_match = END_RE.search(body)
-    if end_match is None:
+    parsed = parse_head(body)
+    if parsed is None:
         log('⚠ Note has no END marker line; skipping scan')
         return
-
-    blocks, texts = split_blocks(body[:end_match.start()])
+    end_match, blocks, texts = parsed
     if len(blocks) < 2:
         return  # nothing between the title and the END marker
 
@@ -551,10 +585,7 @@ def scan_note(title: str, state: dict[str, dict]) -> None:
     if not submitted_any:
         return  # nothing was sent to the API, leave the note untouched
 
-    # Rebuild the inbox with a fresh set of exactly 5 blank lines (old blanks
-    # were dropped above, so they don't accumulate across scans).
-    padding = [BLANK_LINE] * 5
-    new_body = '\n'.join([blocks[0], *kept, *padding, body[end_match.start():]])
+    new_body = rebuild_body(body, end_match, normalize(texts[0]), kept)
     if new_failed:
         new_body = insert_failed_lines(new_body, new_failed)
     try:
