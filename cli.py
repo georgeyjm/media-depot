@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 import time
+from collections import Counter
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
@@ -294,12 +295,22 @@ def calculate_job_statistics(jobs: list[dict], active_queue: list) -> dict[str, 
 # FAILED marker (appended to the note if missing). Lines the API rejects
 # (HTTP 400 or any other error) stay in the inbox and are retried next scan.
 # Everything from the END marker onward is written back untouched.
+#
+# Writes are full-body replaces (AppleScript has no partial-edit API), so an
+# entry added while a cycle runs could be clobbered. Two guards prevent that:
+# a scan or failed-line write is deferred while the note was modified by
+# someone else in the last NOTES_QUIESCE_SECONDS, and every write is computed
+# from a fresh re-read taken just before it, deleting only the lines submitted
+# in this pass — anything that arrived in the meantime survives. Skipping a
+# write is always safe: the API dedupes by share text, so a leftover line is
+# simply resubmitted (same job) and cleaned up on a later, quiet scan.
 # ============================================================================
 
 NOTES_DEFAULT_TITLE = '存档'
 NOTES_STATE_FILE = Path(__file__).resolve().parent / '.cache' / 'notes_inbox_state.json'
-NOTES_SCAN_INTERVAL = 120   # read the note every 2 minutes
-NOTES_POLL_INTERVAL = 30    # poll job statuses every 30 seconds
+NOTES_SCAN_INTERVAL = 180    # read the note every 3 minutes
+NOTES_POLL_INTERVAL = 30     # poll job statuses every 30 seconds
+NOTES_QUIESCE_SECONDS = 120   # hands off while the note was edited this recently
 
 FAILED_MARKER = '========== FAILED =========='  # canonical form, used when creating
 
@@ -326,12 +337,14 @@ def log(msg: str) -> None:
 
 # ---- Notes.app access ------------------------------------------------------
 
-READ_BODY_SCRIPT = '''
+READ_NOTE_SCRIPT = '''
 on run argv
     tell application "Notes"
         set matches to notes whose name is (item 1 of argv)
         if (count of matches) is 0 then error "note not found"
-        return body of item 1 of matches
+        set theNote to item 1 of matches
+        set idleSecs to ((current date) - (modification date of theNote))
+        return (idleSecs as string) & linefeed & (body of theNote)
     end tell
 end run
 '''
@@ -346,24 +359,43 @@ on run argv
 end run
 '''
 
+# time.time() of this process's last note write; note modifications newer than
+# this (plus slack) were made by someone else — see note_busy().
+_last_write_at = 0.0
 
-def read_note_body(title: str) -> str:
+
+def read_note(title: str) -> tuple[float, str]:
+    '''Return (seconds since the note was last modified, body HTML).'''
     result = subprocess.run(
-        ['osascript', '-e', READ_BODY_SCRIPT, title],
+        ['osascript', '-e', READ_NOTE_SCRIPT, title],
         capture_output=True, text=True, timeout=60,
     )
     if result.returncode != 0:
         raise RuntimeError(f'reading note failed: {result.stderr.strip()}')
-    return result.stdout.rstrip('\n')
+    idle, _, body = result.stdout.rstrip('\n').partition('\n')
+    return float(idle), body
 
 
 def write_note_body(title: str, body: str):
+    global _last_write_at
     result = subprocess.run(
         ['osascript', '-e', WRITE_BODY_SCRIPT, title, body],
         capture_output=True, text=True, timeout=60,
     )
     if result.returncode != 0:
         raise RuntimeError(f'writing note failed: {result.stderr.strip()}')
+    _last_write_at = time.time()
+
+
+def note_busy(idle_seconds: float) -> bool:
+    '''True when the note was modified recently by someone other than this
+    process — writing now would risk clobbering an edit (or one still landing
+    from iCloud). Our own writes bump the modification date too, so
+    modifications within a few seconds of our last write don't count.'''
+    if idle_seconds >= NOTES_QUIESCE_SECONDS:
+        return False
+    modified_at = time.time() - idle_seconds
+    return modified_at > _last_write_at + 3
 
 
 # ---- Note body parsing -----------------------------------------------------
@@ -486,14 +518,20 @@ def rebuild_body(body: str, end_match: re.Match, title_text: str,
     return '\n'.join([title_block, *inbox_lines, *padding, body[end_match.start():]])
 
 
-def add_failed_line(title: str, line: str) -> None:
-    body = read_note_body(title)
+def add_failed_line(title: str, line: str) -> bool:
+    '''Insert a failed entry into the note. Returns False without writing when
+    the note is being edited right now — the caller retries later.'''
+    idle, body = read_note(title)
+    if note_busy(idle):
+        log(f'⚠ Note edited {idle:.0f}s ago, deferring FAILED entry: {line[:80]}')
+        return False
     parsed = parse_head(body)
     if parsed is not None:
         end_match, blocks, texts = parsed
         inbox = [raw for raw, text in zip(blocks[1:], texts[1:]) if normalize(text)]
         body = rebuild_body(body, end_match, normalize(texts[0]), inbox)
     write_note_body(title, insert_failed_lines(body, [line]))
+    return True
 
 
 # ---- Persistent job state --------------------------------------------------
@@ -522,52 +560,52 @@ def save_notes_state(state: dict[str, dict]) -> None:
 
 def scan_note(title: str, state: dict[str, dict]) -> None:
     '''Drain the inbox: submit each non-empty line between the title and the
-    END marker, then rebuild the note as
-    title + kept lines + everything from the END marker on (untouched),
-    with any immediately-failed submissions inserted after the FAILED marker.'''
+    END marker, then delete exactly those lines from a FRESH copy of the note
+    read just before the write — so an entry added while submissions ran is
+    never clobbered. Immediately-failed submissions are inserted after the
+    FAILED marker in the same write. If the note is being edited at either
+    end of the cycle, everything is deferred to a later scan.'''
     try:
-        body = read_note_body(title)
+        idle, body = read_note(title)
     except (RuntimeError, subprocess.TimeoutExpired) as e:
         log(f'⚠ {e}')
+        return
+
+    if note_busy(idle):
+        log(f'Note edited {idle:.0f}s ago, deferring scan')
         return
 
     parsed = parse_head(body)
     if parsed is None:
         log('⚠ Note has no END marker line; skipping scan')
         return
-    end_match, blocks, texts = parsed
+    _, blocks, texts = parsed
     if len(blocks) < 2:
         return  # nothing between the title and the END marker
 
-    kept: list[str] = []        # lines left in the inbox (API rejected or down)
+    submitted: list[str] = []   # lines POSTed this pass, to delete from the note
     new_failed: list[str] = []  # submissions that came back already failed
-    submitted_any = False       # only a real submission justifies a rewrite
     api_down = False
 
-    for raw, text in zip(blocks[1:], texts[1:]):
+    for text in texts[1:]:
         line = normalize(text)
-        if not line:
-            continue  # drop blank inbox lines; the padding below replaces them
-        if api_down:
-            kept.append(raw)
+        if not line or api_down:
             continue
 
         try:
             job = request_download_job(line)
         except httpx.RequestError as e:
             log(f'⚠ API unreachable, leaving rest of inbox for next scan: {e}')
-            kept.append(raw)
             api_down = True
             continue
         except httpx.HTTPStatusError as e:
             log(f'⚠ API error {e.response.status_code} for "{line[:80]}", '
                 'leaving line in place')
-            kept.append(raw)
             if e.response.status_code != 400:
                 api_down = True  # server trouble, not this line's fault
             continue
 
-        submitted_any = True
+        submitted.append(line)
         job_id = job['id']
         status = job.get('status')
         log(f'→ Submitted job {job_id} ({status}): {line[:80]}')
@@ -582,8 +620,37 @@ def scan_note(title: str, state: dict[str, dict]) -> None:
             }
             save_notes_state(state)
 
-    if not submitted_any:
+    if not submitted:
         return  # nothing was sent to the API, leave the note untouched
+
+    # Write phase: work from a fresh read so edits made during the
+    # submissions above are preserved.
+    try:
+        idle, body = read_note(title)
+    except (RuntimeError, subprocess.TimeoutExpired) as e:
+        log(f'⚠ {e}; cleanup deferred (resubmission next scan is deduplicated)')
+        return
+    if note_busy(idle):
+        log('Note changed during submissions; deferring cleanup '
+            '(resubmission next scan is deduplicated)')
+        return
+    parsed = parse_head(body)
+    if parsed is None:
+        log('⚠ END marker disappeared during submissions; note left untouched')
+        return
+    end_match, blocks, texts = parsed
+
+    # Keep every inbox line except the ones submitted in this pass.
+    to_delete = Counter(submitted)
+    kept: list[str] = []
+    for raw, text in zip(blocks[1:], texts[1:]):
+        line = normalize(text)
+        if not line:
+            continue  # drop blank lines; rebuild_body writes fresh padding
+        if to_delete[line] > 0:
+            to_delete[line] -= 1
+            continue
+        kept.append(raw)
 
     new_body = rebuild_body(body, end_match, normalize(texts[0]), kept)
     if new_failed:
@@ -606,7 +673,12 @@ def poll_note_jobs(title: str, state: dict[str, dict]) -> None:
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
                 log(f'✗ Job {job_id} vanished from API, moving to FAILED: {share[:80]}')
-                add_failed_line(title, share)
+                try:
+                    if not add_failed_line(title, share):
+                        continue  # note busy; keep the job and retry next poll
+                except (RuntimeError, subprocess.TimeoutExpired) as err:
+                    log(f'⚠ {err}; will retry writing FAILED line next poll')
+                    continue
                 del state[job_id]
                 save_notes_state(state)
             else:
@@ -621,7 +693,8 @@ def poll_note_jobs(title: str, state: dict[str, dict]) -> None:
         elif status in TERMINAL_BAD:
             log(f'✗ Job {job_id} {status}, moving to FAILED: {share[:80]}')
             try:
-                add_failed_line(title, share)
+                if not add_failed_line(title, share):
+                    continue  # note busy; keep the job and retry next poll
             except (RuntimeError, subprocess.TimeoutExpired) as e:
                 log(f'⚠ {e}; will retry writing FAILED line next poll')
                 continue
